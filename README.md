@@ -113,12 +113,27 @@ npm run undo -- --judgment 12 --apply    # 真删
 ### 接模型（第二条策略要用）
 
 ```bash
-$env:LLM_BASE_URL = "https://api.deepseek.com/v1"
+$env:LLM_BASE_URL = "https://api.deepseek.com"
 $env:LLM_API_KEY  = "<令牌>"
-$env:LLM_MODEL    = "deepseek-chat"
+$env:LLM_MODEL    = "deepseek-flash"
 ```
 
 **不配模型时第二条策略不会假装通过** —— 它落一条 `error` 记录，输出里明写「判断没做成 —— 这不等于通过」。空跑出「全部未命中」比什么都不跑更坏：那长得跟「系统很干净」一模一样。
+
+三个可选的变量：
+
+| 变量 | 作用 | 不配时 |
+|---|---|---|
+| `LLM_TEMPERATURE` | 采样温度 | `0` |
+| `LLM_TIMEOUT_MS` | 单次调用超时 | `60000` |
+| `LLM_EXTRA_BODY` | **厂商特有的请求参数**，JSON 对象，原样合并进请求体 | 不发 |
+
+`LLM_EXTRA_BODY` 是给**思考控制**留的口子 —— 各家的参数名与取值都不一样（DeepSeek 是 `{"thinking":{"type":"enabled"},"reasoning_effort":"high"}`，百炼是 `{"enable_thinking":true,"thinking_budget":500}`），所以这里透传，不为某一家写死字段名。写错了（坏 JSON、不是对象）在装配期报错，不静默忽略。
+
+**两个坑值得先说**：
+
+- **思考模式会忽略 `temperature`。** DeepSeek 文档写着思考模式下不支持 `temperature` 等参数，「设置参数不会报错，但也不会生效」。所以默认那个 `temperature: 0` 在那种模型上**压不住随机性** —— 想让判据的可复现性真的成立，得先用 `LLM_EXTRA_BODY` 把思考关掉，或者接受「结论只是那一次的结论」。
+- **思考模式的默认档位往往是开着的，而且是高档。** DeepSeek 的默认是「思考打开、effort 为 `high`」；平台不发这两个参数，于是每次判断都跑在最高强度上 —— 在**常驻轮询**这个用法下，那是成本与超时的主要来源。
 
 ## 目录
 

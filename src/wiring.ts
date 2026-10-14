@@ -54,6 +54,39 @@ export interface Wiring {
  * 桩直接抛错，让判据落一条 error 记录。空跑出「全部未命中」比什么都不跑更坏：
  * 它长得跟「系统很干净」一模一样，而实际上没有任何人看过。
  */
+/**
+ * 读一个可选的数字配置。
+ *
+ * 配错了**在装配期报错**，不静默回落到默认 —— 与平台其它地方一致（白名单里出现
+ * 未知来源同样是装配期抛错，而不是运行时静默取空）。回落的表现是「配置写了但
+ * 没生效」，那与「没写」长得一模一样。
+ */
+function optionalNumber(name: string): number | undefined {
+  const raw = process.env[name];
+  if (!raw) return undefined;
+
+  const value = Number(raw);
+  if (!Number.isFinite(value)) throw new Error(`${name} 不是数字：${raw}`);
+  return value;
+}
+
+/** 读一个可选的 JSON 对象配置。同样在装配期报错，不静默忽略。 */
+function optionalJsonObject(name: string): Record<string, unknown> | undefined {
+  const raw = process.env[name];
+  if (!raw) return undefined;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`${name} 不是合法 JSON：${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${name} 必须是一个 JSON 对象，例如 {"thinking":{"type":"disabled"}}`);
+  }
+  return parsed as Record<string, unknown>;
+}
+
 export function createLlm(): { client: LlmClient; configured: boolean } {
   const baseUrl = process.env.LLM_BASE_URL;
   const apiKey = process.env.LLM_API_KEY;
@@ -72,7 +105,19 @@ export function createLlm(): { client: LlmClient; configured: boolean } {
 
   return {
     configured: true,
-    client: new OpenAiCompatLlmClient({ baseUrl, apiKey, model }),
+    client: new OpenAiCompatLlmClient({
+      baseUrl,
+      apiKey,
+      model,
+      // 三个可选项。
+      //
+      // `temperature` 默认 0（判据要的是可复现），但**支持思考模式的厂商会忽略它**
+      // —— 见 openai-compat.ts 里那段注释。厂商特有的思考参数走 LLM_EXTRA_BODY
+      // 透传，例如 DeepSeek 的 {"thinking":{"type":"disabled"}}。
+      temperature: optionalNumber('LLM_TEMPERATURE'),
+      timeoutMs: optionalNumber('LLM_TIMEOUT_MS'),
+      extraBody: optionalJsonObject('LLM_EXTRA_BODY'),
+    }),
   };
 }
 
