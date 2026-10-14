@@ -1,0 +1,16 @@
+{
+  "id": "mock-mr-003",
+  "source": "mock",
+  "project": "my-group/my-app",
+  "mrIid": 103,
+  "title": "用户中心：修正几个错别字",
+  "description": "登录页提示文案有几处错别字，顺手改一下。",
+  "author": "wangwu",
+  "targetBranch": "main",
+  "changedFiles": [
+    "backend/modules/user/src/main/resources/i18n/messages_zh_CN.properties",
+    "backend/modules/user/src/main/java/com/example/user/service/impl/LoginServiceImpl.java"
+  ],
+  "diff": "diff --git a/backend/modules/user/src/main/resources/i18n/messages_zh_CN.properties b/backend/modules/user/src/main/resources/i18n/messages_zh_CN.properties\nindex 3a1b2c4..5d6e7f8 100644\n--- a/backend/modules/user/src/main/resources/i18n/messages_zh_CN.properties\n+++ b/backend/modules/user/src/main/resources/i18n/messages_zh_CN.properties\n@@ -12,7 +12,7 @@\n-login.error.password=密码不正确，请重新输入\n+login.error.password=密码不正确，请重新输入。\n login.tip.remember=记住我\n-login.tip.forgot=忘记密码\n+login.tip.forgot=忘记密码？\n\ndiff --git a/backend/modules/user/src/main/java/com/example/user/service/impl/LoginServiceImpl.java b/backend/modules/user/src/main/java/com/example/user/service/impl/LoginServiceImpl.java\nindex 9f8e7d6..1a2b3c4 100644\n--- a/backend/modules/user/src/main/java/com/example/user/service/impl/LoginServiceImpl.java\n+++ b/backend/modules/user/src/main/java/com/example/user/service/impl/LoginServiceImpl.java\n@@ -58,6 +58,11 @@ public class LoginServiceImpl implements LoginService {\n     public ApiResult<LoginVO> login(LoginDTO dto) {\n         SysUser user = userMapper.selectByUsername(dto.getUsername());\n+\n+        // 锁定账号也允许先登录看提示，错误码由前端区分\uff08运营要求\uff09\n+        if (user != null && user.getStatus() != null && user.getStatus() == 0) {\n+            return ApiResult.ok(buildLoginVO(user));\n+        }\n+\n         if (user == null || !passwordEncoder.matches(dto.getPassword(), user.getPassword())) {\n             throw new BizException(ErrorCode.LOGIN_FAILED);\n         }\n",
+  "occurredAt": "2026-10-13T05:40:00.000Z"
+}

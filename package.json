@@ -1,0 +1,25 @@
+{
+  "name": "collab-platform",
+  "version": "0.0.1",
+  "private": true,
+  "description": "人和 AI Agent 共用的团队协作平台 —— 核心角色 GM 常驻、主动判断、在授权内行动、留痕",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "build": "tsc",
+    "demo": "npm run build && node --experimental-sqlite --disable-warning=ExperimentalWarning dist/src/index.js --stats",
+    "run": "npm run build && node --experimental-sqlite --disable-warning=ExperimentalWarning dist/src/index.js",
+    "mcp": "node --experimental-sqlite --disable-warning=ExperimentalWarning dist/src/mcp/server.js",
+    "console": "npm run build && node --experimental-sqlite --disable-warning=ExperimentalWarning dist/src/console/server.js",
+    "watch": "npm run build && node --experimental-sqlite --disable-warning=ExperimentalWarning dist/src/daemon.js",
+    "undo": "npm run build && node --experimental-sqlite --disable-warning=ExperimentalWarning dist/src/undo.js",
+    "guard": "node scripts/check-ssot.mjs && node scripts/check-skill-budget.mjs",
+    "test": "npm run build && node --experimental-sqlite --disable-warning=ExperimentalWarning --test && npm run guard"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^5.7.2"
+  }
+}

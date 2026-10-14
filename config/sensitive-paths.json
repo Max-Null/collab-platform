@@ -1,0 +1,19 @@
+{
+  "version": "v1",
+  "updatedAt": "2026-10-13",
+  "note": "敏感路径清单。这是数据不是代码——由人维护、可随时增删，增删本身应留痕（对应设计第 4 条③）。首版取自既有的真实教训。",
+  "paths": [
+    { "glob": "**/*.sql", "label": "库表 SQL 与迁移脚本" },
+    { "glob": "**/AGENTS.md", "label": "团队规则文件" },
+    { "glob": "**/CLAUDE.md", "label": "团队规则文件" },
+    { "glob": "**/.gitlab-ci.yml", "label": "CI 配置" },
+    { "glob": "**/Jenkinsfile", "label": "CI 配置" },
+    { "glob": "**/local.secrets.json", "label": "凭据文件" },
+    { "glob": "**/.env", "label": "环境变量与凭据" },
+    { "glob": "**/security/**", "label": "鉴权与权限代码" },
+    { "glob": "**/permission/**", "label": "鉴权与权限代码" },
+    { "glob": "**/bootstrap-*.yml", "label": "服务与 Nacos 配置" },
+    { "glob": "**/deploy.sh", "label": "部署脚本" },
+    { "glob": "**/pre-commit*", "label": "提交钩子" }
+  ]
+}

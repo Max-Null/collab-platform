@@ -1,0 +1,825 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>协作平台 · 控制台</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --panel:#fff; --ink:#1b1f27; --ink-2:#4a5162; --ink-3:#858c9c;
+    --line:#e6e8ee; --line-2:#eef0f5;
+    --brand:#3557d6; --brand-soft:#eef2ff;
+    --hit:#c0522a; --hit-bg:#fdf1ec;
+    --miss:#98a0b0; --miss-bg:#f2f4f7;
+    --err:#9a6c00; --err-bg:#fdf6e3;
+    --ok:#1f7a4d; --ok-bg:#ecf7f1;
+    --shadow:0 1px 2px rgba(20,26,40,.05), 0 6px 20px rgba(20,26,40,.05);
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  a{color:var(--brand)}
+  code{font-family:var(--mono);font-size:12px;background:#f2f4f8;padding:1px 5px;border-radius:4px}
+
+  header{background:var(--panel);border-bottom:1px solid var(--line);padding:13px 24px;
+    position:sticky;top:0;z-index:20;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  header h1{font-size:15px;margin:0;font-weight:650;letter-spacing:.2px}
+  header .env{font-size:12px;color:var(--ink-3);font-family:var(--mono)}
+  header .spacer{flex:1}
+  header nav a{font-size:13px;color:var(--ink-2);text-decoration:none;margin-left:14px;
+    padding:3px 0;border-bottom:2px solid transparent}
+  header nav a:hover{color:var(--brand)}
+
+  main{max-width:1080px;margin:0 auto;padding:22px 24px 40px}
+  section{margin-bottom:30px}
+  h2{font-size:14px;margin:0 0 4px;display:flex;align-items:center;gap:6px}
+  h2 .count{font-weight:400;color:var(--ink-3);font-size:12.5px}
+  .lede{font-size:12.5px;color:var(--ink-3);margin:0 0 13px}
+
+  /* ── 「?」 ──────────────────────────────────────────────
+     写法沿用中台控制台：讲来源、讲口径、讲容易踩的坑，不写「点击此处可…」。
+     问号与将来的引导漫游共用同一份 TIPS，改一处不会分叉。 */
+  .help-tip{display:inline-flex;align-items:center;justify-content:center;
+    width:15px;height:15px;border-radius:50%;border:1px solid #c3c9d6;background:#fff;
+    color:var(--ink-3);font-size:10.5px;font-weight:700;cursor:help;flex:none;
+    font-family:var(--mono);line-height:1;padding:0}
+  .help-tip:hover,.help-tip:focus-visible{border-color:var(--brand);color:var(--brand);outline:none}
+  #tipLayer{position:fixed;z-index:100;display:none;max-width:400px;
+    max-height:70vh;overflow:auto;
+    background:#1b1f27;color:#eef1f7;border-radius:9px;padding:11px 13px;
+    font-size:12.5px;line-height:1.65;box-shadow:0 10px 30px rgba(16,20,30,.28)}
+  #tipLayer b{color:#fff}
+  #tipLayer code{background:rgba(255,255,255,.13);color:#e8ecf6}
+
+  /* ── 运行图 ─────────────────────────────────────────
+     四段链路一次看全。用 HTML+CSS 而不是 SVG：节点要能点、能 hover、
+     能在窄屏换行，这三件事用 flex 都比用 SVG 省事，而它看起来仍然是一张图。 */
+  .flow{display:flex;align-items:stretch;gap:0;background:var(--panel);
+    border:1px solid var(--line);border-radius:12px;padding:18px 16px;box-shadow:var(--shadow);
+    flex-wrap:wrap}
+  .fnode{flex:1 1 0;min-width:132px;text-decoration:none;color:inherit;
+    border-radius:9px;padding:10px 12px;transition:background .12s;position:relative}
+  .fnode:hover{background:#f8f9fc}
+  .fnode .nlab{font-size:11.5px;color:var(--ink-3);letter-spacing:.3px}
+  .fnode .nnum{font-size:25px;font-weight:640;line-height:1.25;font-variant-numeric:tabular-nums}
+  .fnode .nsub{font-size:11.5px;color:var(--ink-3);line-height:1.5}
+  .fnode.dim .nnum{color:var(--ink-3);font-weight:500}
+  .fnode.warn .nnum{color:var(--err)}
+  .fnode.ok .nnum{color:var(--ok)}
+  .farrow{display:flex;align-items:center;color:#c8cedb;font-size:15px;padding:0 2px;flex:none}
+
+  /* ── tab ────────────────────────────────────────────── */
+  .tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:16px}
+  .tabs button{font:inherit;font-size:13px;border:none;background:none;cursor:pointer;
+    padding:8px 14px;color:var(--ink-2);border-bottom:2px solid transparent;margin-bottom:-1px}
+  .tabs button:hover{color:var(--brand)}
+  .tabs button.on{color:var(--brand);border-bottom-color:var(--brand);font-weight:560}
+  .tabs button .n{color:var(--ink-3);font-size:12px;margin-left:5px}
+  .pane{display:none}
+  .pane.on{display:block}
+
+  /* ── 卡片 ──────────────────────────────────────────── */
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    padding:14px 16px;margin-bottom:10px}
+  .card.empty{padding:22px;text-align:center;color:var(--ink-3);font-size:13px}
+
+  .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .row.tight{margin-bottom:6px}
+
+  .tag{font-size:11.5px;padding:1px 7px;border-radius:20px;border:1px solid transparent;white-space:nowrap}
+  .tag.hit{background:var(--hit-bg);color:var(--hit);border-color:#f2ddd4}
+  .tag.miss{background:var(--miss-bg);color:var(--miss)}
+  .tag.error{background:var(--err-bg);color:var(--err);border-color:#f0e3c0}
+  .tag.policy{background:var(--brand-soft);color:var(--brand);font-family:var(--mono);font-size:11px}
+  .tag.shadow{background:#f4f0fa;color:#6b4fa8;border-color:#e6dcf5}
+  .tag.ok{background:var(--ok-bg);color:var(--ok);border-color:#cfe9dc}
+
+  .concl{font-size:13.5px;margin:7px 0 0}
+  /* 结论的前提：它是结论的一部分，不是依据 —— 所以紧跟结论、放在依据上面。
+     人要对这条表态，就得先看得见它是有条件的。 */
+  .pre{font-size:12.5px;color:var(--err);background:var(--err-bg);
+    border-left:3px solid #e0b73c;border-radius:0 6px 6px 0;
+    padding:6px 10px;margin-top:7px}
+  /* 旁证：零人力成本的置信度 —— 措辞必须克制，它不等于「已确认」 */
+  .corr{font-size:12.5px;color:#3a4a6b;background:#f2f5fc;
+    border-left:3px solid #8fa6d8;border-radius:0 6px 6px 0;
+    padding:6px 10px;margin-top:7px}
+
+  /* 批量表态。它存在是为了让「回写反应」便宜到有人愿意做 ——
+     但提示里必须写清它会留痕成「一次 N 条」，因为一键全选与逐条看过的
+     信息量不同，统计上不能混。 */
+  .batchbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    background:#fff;border:1px solid var(--line);border-left:3px solid var(--brand);
+    border-radius:var(--radius);padding:10px 14px;margin-bottom:12px;font-size:13px}
+  .batchbar[hidden]{display:none}
+  .batchbar .hint{font-size:11.5px;color:var(--ink-3);max-width:420px;line-height:1.5}
+  .pick{width:15px;height:15px;flex:none;cursor:pointer}
+
+  /* 轻提示 */
+  #toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(12px);
+    background:#1c2440;color:#fff;padding:9px 18px;border-radius:8px;font-size:13px;
+    opacity:0;pointer-events:none;transition:.22s;z-index:99}
+  #toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+  .meta{font-size:11.5px;color:var(--ink-3);font-family:var(--mono)}
+
+  details{margin-top:8px}
+  summary{cursor:pointer;font-size:12.5px;color:var(--ink-2);list-style:none}
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:"▸ ";color:var(--ink-3)}
+  details[open] summary::before{content:"▾ "}
+  .ev{margin:7px 0 0;padding:0;list-style:none;font-size:12.5px}
+  .ev li{padding:4px 0;border-top:1px solid var(--line-2);display:flex;gap:8px}
+  .ev .k{font-family:var(--mono);font-size:11px;color:var(--ink-3);flex:none;width:76px;padding-top:1px}
+  .ev .d{color:var(--ink-2)}
+
+  .act{margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .act input{flex:1;min-width:200px;font:inherit;font-size:12.5px;padding:6px 9px;
+    border:1px solid var(--line);border-radius:7px;background:#fbfcfe}
+  .act input:focus{outline:none;border-color:var(--brand);background:#fff}
+  button{font:inherit;font-size:12.5px;padding:5px 11px;border-radius:7px;border:1px solid var(--line);
+    background:#fff;color:var(--ink-2);cursor:pointer}
+  button:hover{border-color:#c9cedb;color:var(--ink)}
+  button.yes:hover{border-color:#b6ddc8;background:var(--ok-bg);color:var(--ok)}
+  button.no:hover{border-color:#eccfc4;background:var(--hit-bg);color:var(--hit)}
+
+  .reacted{font-size:12.5px;color:var(--ok);display:flex;align-items:center;gap:8px}
+  .reacted b{color:var(--ink-2);font-weight:500}
+
+  /* ── 表格 ──────────────────────────────────────────── */
+  table{width:100%;border-collapse:collapse;background:var(--panel);
+    border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--line-2);font-size:13px}
+  th{font-size:11.5px;color:var(--ink-3);font-weight:600;background:#fafbfd;white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+  td.num{font-family:var(--mono);font-size:12.5px;text-align:right;white-space:nowrap}
+  td.num.dim{color:var(--ink-3)}
+  td.num.err{color:var(--err);font-weight:600}
+
+  /* ── 分布条 ─────────────────────────────────────────
+     样本量不到 30 就不画 —— 5 个点画成饼图会把随机波动画成一个很大的扇形，
+     而图形比数字更有说服力。不画的时候说清楚为什么。 */
+  .bar{display:flex;height:16px;border-radius:4px;overflow:hidden;background:#f0f2f6;min-width:120px}
+  .bar i{display:block;height:100%}
+  .bar i.h{background:var(--hit)} .bar i.m{background:var(--miss)} .bar i.e{background:#e0b73c}
+  .bar-note{font-size:11.5px;color:var(--ink-3);font-style:normal}
+
+  /* 策略健康信号：「拦不住 / 没什么可拦 / 根本没开」三者看起来一样，
+     所以要把判定结果直接写在策略名下面，而不是留给人去比数字 */
+  .health{font-size:11.5px;line-height:1.55;margin-top:5px;max-width:230px}
+  .health.err{color:var(--err)}
+  .health.off{color:var(--ink-3);font-style:italic}
+
+  .filters{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center}
+  select{font:inherit;font-size:12.5px;padding:5px 9px;border:1px solid var(--line);
+    border-radius:7px;background:#fff;color:var(--ink-2)}
+  .toggle{font-size:12.5px;color:var(--ink-2);display:flex;align-items:center;gap:5px;cursor:pointer}
+
+  .foot{margin-top:30px;padding-top:14px;border-top:1px solid var(--line);
+    font-size:12px;color:var(--ink-3);line-height:1.9}
+  .banner{background:var(--err-bg);border:1px solid #f0e3c0;color:var(--err);
+    border-radius:10px;padding:10px 14px;font-size:12.5px;margin-bottom:16px}
+
+  /* ── 新手漫游 ───────────────────────────────────────
+     高亮用 box-shadow 的巨型扩散代替单独一层遮罩：只需一个元素，
+     且它跟着目标走的时候天然是个「洞」。 */
+  #tourSpot{position:fixed;border-radius:10px;pointer-events:none;z-index:200;
+    box-shadow:0 0 0 9999px rgba(18,22,32,.5);transition:all .2s cubic-bezier(.4,0,.2,1)}
+  #tourSpot[hidden]{display:none}
+  #tourPop{position:fixed;z-index:201;width:404px;background:#fff;border-radius:12px;
+    padding:15px 17px 12px;box-shadow:0 14px 44px rgba(16,20,30,.26);border:1px solid var(--line)}
+  #tourPop[hidden]{display:none}
+  #tourTitle{margin:0 0 7px;font-size:13.5px;font-weight:640}
+  #tourText{margin:0;font-size:12.5px;color:var(--ink-2);line-height:1.72;
+    max-height:250px;overflow:auto;padding-right:4px}
+  #tourText b{color:var(--ink)}
+  #tourText code{background:#f2f4f8;color:var(--ink-2)}
+  #tourFoot{display:flex;align-items:center;gap:8px;margin-top:13px}
+  #tourStepNo{font-size:11.5px;color:var(--ink-3);font-family:var(--mono);margin-right:auto}
+  #tourSkip{background:none;border:none;color:var(--ink-3);font-size:12px;padding:5px 4px}
+  #tourSkip:hover{color:var(--ink-2)}
+  #tourInvite{position:fixed;right:22px;bottom:22px;z-index:190;background:#fff;
+    border:1px solid var(--line);border-radius:11px;padding:13px 15px;
+    box-shadow:0 10px 32px rgba(16,20,30,.16);font-size:12.5px;max-width:286px;line-height:1.65}
+  #tourInvite[hidden]{display:none}
+  #tourInvite .ti-t{font-weight:620;margin-bottom:5px;font-size:13px}
+  #tourInvite .ti-b{color:var(--ink-2)}
+  #tourInvite .ti-f{display:flex;gap:8px;margin-top:10px;justify-content:flex-end}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>协作平台 · 控制台</h1>
+  <span class="env" id="env"></span>
+  <span class="spacer"></span>
+  <nav>
+    <a href="#todo">待办</a>
+    <a href="#panes">观察</a>
+    <a href="#panes">判断记录</a>
+    <a href="#" id="replayTour">重看引导</a>
+  </nav>
+</header>
+
+<div id="tipLayer"></div>
+
+<!-- 新手漫游：高亮框 + 气泡 + 首次的邀请条 -->
+<div id="tourSpot" hidden></div>
+<div id="tourPop" hidden>
+  <h4 id="tourTitle"></h4>
+  <p id="tourText"></p>
+  <div id="tourFoot">
+    <span id="tourStepNo"></span>
+    <button id="tourSkip">跳过</button>
+    <button id="tourPrev">上一步</button>
+    <button id="tourNext" class="yes">下一步</button>
+  </div>
+</div>
+<div id="tourInvite" hidden>
+  <div class="ti-t">第一次来？</div>
+  <div class="ti-b">这份控制台有三块东西要看，跟着走一遍大概一分钟。</div>
+  <div class="ti-f">
+    <button id="tourLater">以后再说</button>
+    <button id="tourStart" class="yes">带我走一遍</button>
+  </div>
+</div>
+
+<main>
+  <div id="modelWarn"></div>
+
+  <!-- ═══════════════ 运行图 ═══════════════ -->
+  <section id="flow">
+    <h2>平台在跑什么 <i class="help-tip" data-tip="flow" tabindex="0">?</i></h2>
+    <p class="lede">一条判定从进入到留痕要走的路。四段的数目应当对得上账 —— 对不上就说明中间有环节没走通。</p>
+    <div class="flow" id="flowChart"></div>
+  </section>
+
+  <!-- ═══════════════ 待办 ═══════════════ -->
+  <section id="todo">
+    <h2>待办 <i class="help-tip" data-tip="todo" tabindex="0">?</i>
+      <span class="count" id="todoCount"></span></h2>
+    <p class="lede">在等你表态的判断。不回写，这条策略的升级阈值就永远算不出来。</p>
+    <div id="todoList"></div>
+  </section>
+
+  <!-- ═══════════════ tab：观察 / 判断记录 ═══════════════ -->
+  <section id="panes">
+    <div class="tabs">
+      <button data-pane="watch" class="on">观察 <span class="n" id="tabWatchN"></span></button>
+      <button data-pane="log">判断记录 <span class="n" id="tabLogN"></span></button>
+    </div>
+
+    <div class="pane on" id="pane-watch">
+      <p class="lede">判据改过之后，命中率与之前根本不可比 —— 所以这里一行是一个版本，不聚成一个数。</p>
+      <table id="statsTable">
+        <thead><tr>
+          <th>策略 / 版本 <i class="help-tip" data-tip="version" tabindex="0">?</i></th>
+          <th style="text-align:right">评估 <i class="help-tip" data-tip="denom" tabindex="0">?</i></th>
+          <th style="text-align:right">看过</th>
+          <th style="text-align:right">命中</th>
+          <th style="text-align:right">未命中</th>
+          <th style="text-align:right">没做成 <i class="help-tip" data-tip="error" tabindex="0">?</i></th>
+          <th style="text-align:right">否定 <i class="help-tip" data-tip="upgrade" tabindex="0">?</i></th>
+          <th style="width:170px">结局分布 <i class="help-tip" data-tip="chart" tabindex="0">?</i></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="pane" id="pane-log">
+      <p class="lede">每条记录对应一次真实的判定，未命中的也在里面。</p>
+      <div class="filters">
+        <select id="fPolicy"><option value="">全部策略</option></select>
+        <select id="fOutcome">
+          <option value="">全部结局</option>
+          <option value="hit">命中</option>
+          <option value="miss">未命中</option>
+          <option value="error">判断没做成</option>
+        </select>
+        <label class="toggle"><input type="checkbox" id="fPending"> 只看待回应</label>
+      </div>
+      <div id="logList"></div>
+    </div>
+  </section>
+
+  <div class="foot">
+    <div>身份<b>自报</b>，未经验证 <i class="help-tip" data-tip="identity" tabindex="0">?</i></div>
+    <div>控制台上的每个数字，要么来自判断记录、要么来自代码托管平台的客观事实 —— 没有第三个来源 <i class="help-tip" data-tip="source" tabindex="0">?</i></div>
+  </div>
+</main>
+
+<script>
+/* ==========================================================================
+   说明文案 —— 「?」问号与将来的引导漫游共用同一份。
+   分两份写的话，改了一处忘另一处，两处说法就会开始分叉。
+   写法沿用中台控制台里 HelpTip 的风格：讲来源、口径、以及容易踩的坑。
+   ========================================================================== */
+const TIPS = {
+  flow: "一条判定从进入到留痕要走的路：**事件 → 每条策略各判一次 → 表态 → 留痕 → 人**。⚠️ 「表态」不是「命中的处置」—— 每个事件都会产生一次动作（含「没发现问题」的通告），所以它会多于命中数，那不是缺陷。**该看的账是**：表态 = 事件数，留痕 = 判定数；对不上才说明有环节没走通。",
+
+  todo: "在等你表态的判断：还没有人回写过反应的**命中**与**判断没做成**。⚠️ 未命中不进这里 —— 它是「看过，没问题」，没有主张需要人确认，列进来只会把第一屏变成数据总览。回写是**事后追认**，不代表当时的处置错了。",
+
+  denom: "两个分母别混：**评估**是这条策略跑过多少次（回答「它有没有在工作」）；**看过**是其中有多少次人真的表过态（回答「它的判断被核对过几次」）。⚠️ **升级判据用的是后者** —— 用评估当分母等于用冷漠稀释信号：跑了 100 次、99 次没人理，唯一那次被人明确否定，在 1/100 里像噪声，在 1/1 里才看得出是真被推翻过。这与「判断没做成并进未命中」是同一类错误，只是换了个位置。",
+
+  version: "为什么按「策略 + 版本」切分，而不是按策略聚合成一个数：判据改过之后命中率与之前根本不可比，处置级别从 1 改到 2 之后命中做的事也完全是两回事。聚成一个数会把两段不可比的数据平均起来 —— 而那个数看起来更平滑、更像「长期趋势」，于是更容易被信任。想跨版本看，就把几行并排读。",
+
+  error: "「判断没做成」：取不到数、模型调不通、模型返回的不是约定格式，都会落到这里。⚠️ **它不等于通过**。单独一列是刻意的 —— 并进「未命中」就等于用失败冒充通过，而失败恰恰是最需要人看见的那一种。",
+
+  upgrade: "只有「明确否定」进升级条件；采纳与无视照样记，但不当判据。「没改也没否定」和「明确说不对」是两种不同的东西，混起来会得出「这条策略没人反对」的假结论。",
+
+  chart: "样本量不到 **30** 就不画分布条。5 个点画成图，会把随机波动画成一个很大的扇形 —— **图形比数字更有说服力**，所以它会编造出一个不存在的模式，而人不会去怀疑一张图。不够就不画，并在旁边写清为什么。",
+
+  record: "四类依据分开看：changed_file 是客观事实（命中了哪些文件）；rule 是**策略自己给出的理由**；gather 说明这次取到了哪些数；model 说明是哪家模型下的判断。⚠️ rule 那几条是模型的措辞，不是可复现的推理过程 —— 温度设为 0 也不保证两次跑出同一句话。回看时看到的是「当时它说了什么」。",
+
+  identity: "平台还没有身份系统，这里记的是你自报的名字，机制上做不到「证明是你」。所以它是**流程约束，不是权限** —— 约束的是承诺，不是防住有意绕过的人。",
+
+  source: "控制台自己不下判断，它只做两件事：把已有的判断记录换个说法呈现（并指回记录 id），以及组织语言。要下判断就得走策略 —— 有 id、有版本、有判据、进观察期。"
+};
+
+const MIN_SAMPLE = 30;   // 低于这个数不画分布：图形会把噪声画成模式
+
+/* ── 「?」弹层 ───────────────────────────────────────── */
+const tipLayer = document.getElementById('tipLayer');
+let tipEl = null;
+
+function showTip(el){
+  const text = TIPS[el.dataset.tip];
+  if(!text) return;
+  tipLayer.innerHTML = text.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`(.+?)`/g, '<code>$1</code>');
+  tipLayer.style.display = 'block';
+  const r = el.getBoundingClientRect();
+  const w = tipLayer.offsetWidth, h = tipLayer.offsetHeight;
+  let left = r.left;
+  if(left + w > innerWidth - 12) left = innerWidth - w - 12;
+  if(left < 12) left = 12;
+  let top = r.bottom + 8;
+  if(top + h > innerHeight - 12) top = r.top - h - 8;
+  tipLayer.style.left = left + 'px';
+  tipLayer.style.top = Math.max(12, top) + 'px';
+  tipEl = el;
+}
+function hideTip(){ tipLayer.style.display='none'; tipEl = null; }
+
+document.addEventListener('mouseover', e => {
+  const t = e.target.closest('.help-tip');
+  if(t && t !== tipEl) showTip(t);
+  else if(!t && tipEl && !e.target.closest('#tipLayer')) hideTip();
+});
+document.addEventListener('focusin', e => {
+  const t = e.target.closest('.help-tip');
+  if(t) showTip(t); else if(tipEl) hideTip();
+});
+document.addEventListener('scroll', hideTip, true);
+
+/* ==========================================================================
+   新手漫游 —— 7 步，可跳过、可重放。
+   每步的 tip 直接引用 TIPS 的 key（与问号同源），text 只在它之外补这一步特有的话 ——
+   重写一份的话，改了一处忘另一处，两处说法就会开始分叉。
+   ========================================================================== */
+const TOUR = [
+  { sel:'#flow', title:'先看这张图', tip:'flow', pane:null,
+    text:'平台就干这一件事。每格上的数字是当前真实的值，**点格子能跳到对应的明细**。\n\n'
+       + '四格的账对不对得上，是这张图唯一要看的东西 —— 对不上账的流程图比没有流程图更糟，'
+       + '因为人会以为是自己看错了。' },
+
+  { sel:'#todo', title:'在等你的在这里', tip:'todo', pane:null,
+    text:'这一屏只放**命中**与**判断没做成** —— 未命中的是「看过，没问题」，没有主张需要你确认，'
+       + '列进来只会把它变成数据总览。\n\n你在这里写的每一条反应，是后面所有机制的前提：'
+       + '升级判据、双轨对照、GM 的记忆，全都靠它。没有它，后面三层都是空转的。' },
+
+  { sel:'#todoList .act', title:'就地回写，不用跳页', tip:'upgrade', pane:null, optional:true,
+    text:'三个按钮：**采纳** = 这条判断有用；**否定** = 它错了或没用；**无视** = 看到了但没管。\n\n'
+       + '左边那行填「为什么」，它会进库而不只是进终端 —— 判据要靠它改进。' },
+
+  { sel:'#todoList details', title:'点开看它凭什么', tip:'record', pane:null, optional:true,
+    text:'每条结论下面都能展开依据。四类分开看：**changed_file** 是客观事实（命中了哪些文件）、'
+       + '**rule** 是策略自己给出的理由、**gather** 说明这次取到了哪些数、**model** 说明是哪家模型下的判断。' },
+
+  { sel:'#panes', title:'GM 干得怎么样', tip:'version', pane:'watch',
+    text:'一行是**一条策略的一个版本**，不聚成一个数。\n\n'
+       + '为什么不聚：判据改过之后命中率根本不可比，处置级别从 1 改到 2 之后命中做的事也完全不同。'
+       + '聚起来会得到一个更好看、更像「长期趋势」的数，于是更容易被信任 —— 那正是危险所在。' },
+
+  { sel:'#pane-log', title:'每一条判定都留了痕', tip:'source', pane:'log',
+    text:'未命中的也在里面 —— 没有它就无法回答「这条策略到底跑过几次」，而那个数就是观察期的分母。\n\n'
+       + '控制台自己不下判断：它要么转述已有记录（并指回记录 id），要么组织语言。要下判断就得走策略。' },
+
+  { sel:'.foot', title:'忘了就问「?」', tip:'identity', pane:null,
+    text:'页面上每个「?」讲的都是**来源、口径、容易踩的坑**，和这份引导是同一份文案 —— '
+       + '改了一处不会分叉。右上角「重看引导」可以随时再走一遍。' }
+];
+
+const TOUR_KEY = 'collabConsoleTour';
+const GAP = 12, MARGIN = 14;
+
+// 自检：漫游引用的 TIPS key 必须存在。
+// 少一个的话，那一步会**静默地少掉最关键的口径说明** —— 它看起来只是「这一步话比较少」，
+// 不报错、不空白，谁也不会去核对。所以这里宁可吵一句。
+TOUR.forEach(s => { if(s.tip && !(s.tip in TIPS)) console.warn('[漫游] 引用了不存在的说明文案：', s.tip); });
+
+let tourAt = 0;
+
+const rich = t => esc(t)
+  // 文案里写的是字面量 \n（编辑时多转义了一层），先还原成真换行再处理
+  .replace(/\\n/g, '\n')
+  .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+  .replace(/\n{2,}/g, '<br><br>')
+  .replace(/\n/g, '<br>');
+
+/** 切到某一步需要的 tab */
+function setPane(name){
+  document.querySelectorAll('.tabs button').forEach(x =>
+    x.classList.toggle('on', x.dataset.pane === name));
+  document.querySelectorAll('.pane').forEach(p =>
+    p.classList.toggle('on', p.id === 'pane-' + name));
+}
+
+function placeTour(){
+  const step = TOUR[tourAt];
+  const el = document.querySelector(step.sel);
+
+  // 目标不存在就跳过这一步，而不是退出整个引导：
+  // 待办为空时「回写」那一步没有目标，但后面的步骤照样值得看。
+  if(!el || (el.offsetWidth === 0 && el.offsetHeight === 0)){
+    if(tourAt < TOUR.length - 1){ tourAt++; return placeTour(); }
+    return endTour();
+  }
+
+  el.scrollIntoView({ block:'center', behavior:'auto' });
+
+  const r = el.getBoundingClientRect();
+  const pad = 6;
+  const spot = $('#tourSpot');
+  spot.hidden = false;
+  spot.style.left = (r.left - pad) + 'px';
+  spot.style.top = (r.top - pad) + 'px';
+  spot.style.width = (r.width + pad * 2) + 'px';
+  spot.style.height = (r.height + pad * 2) + 'px';
+
+  $('#tourStepNo').textContent = `第 ${tourAt + 1} / ${TOUR.length} 步`;
+  $('#tourTitle').textContent = step.title;
+  $('#tourText').innerHTML = (step.tip ? rich(TIPS[step.tip]) + '<br><br>' : '') + rich(step.text);
+  $('#tourPrev').style.visibility = tourAt === 0 ? 'hidden' : 'visible';
+  $('#tourNext').textContent = tourAt === TOUR.length - 1 ? '知道了' : '下一步';
+
+  const pop = $('#tourPop');
+  pop.hidden = false;
+  const pw = pop.offsetWidth, ph = pop.offsetHeight;
+  const left = Math.max(MARGIN, Math.min(r.left, innerWidth - MARGIN - pw));
+  // 目标在上半屏就把气泡放它下面，在下半屏就放上面 —— 只在放不下时才换边。
+  // （原来那个 `ph <= below || r.top <= below` 的条件在长文案上会把气泡甩得到处都是。）
+  const below = innerHeight - r.bottom - GAP - MARGIN;
+  const above = r.top - GAP - MARGIN;
+  let top;
+  if (ph <= below) top = r.bottom + GAP + pad;
+  else if (ph <= above) top = r.top - GAP - ph - pad;
+  else top = r.top <= innerHeight / 2 ? innerHeight - MARGIN - ph : MARGIN;
+  pop.style.left = left + 'px';
+  pop.style.top = Math.max(MARGIN, Math.min(top, innerHeight - MARGIN - ph)) + 'px';
+}
+
+function startTour(at = 0){
+  tourAt = at;
+  $('#tourInvite').hidden = true;
+  setPane(TOUR[at].pane || 'watch');
+  placeTour();
+}
+
+function endTour(){
+  $('#tourSpot').hidden = true;
+  $('#tourPop').hidden = true;
+  localStorage.setItem(TOUR_KEY, 'done');
+}
+
+/* 漫游的事件绑定放在文件末尾 —— `$` 在下面的「工具」区才定义，
+   监听器直接写在这里会撞上 TDZ（Cannot access '$' before initialization）。 */
+
+/* ── 工具 ───────────────────────────────────────────── */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const OUTCOME = { hit:'命中', miss:'未命中', error:'判断没做成' };
+const REACT = { adopted:'采纳', rejected:'明确否定', ignored:'无视' };
+
+const api = async (path, opts) => {
+  const r = await fetch(path, opts);
+  const j = await r.json();
+  if(j.error) throw new Error(j.error);
+  return j;
+};
+
+/* ── 运行图 ───────────────────────────────────────────
+   五格的账要能对得上：
+     事件 N → 判定 N×(策略条数) → 表态 N（每个事件一次）→ 留痕 判定数 → 人
+   ⚠️ 「表态」不是「命中的处置」：改了「每次都表态」之后，每个事件都会产生
+   一次动作（包括「没发现问题」的通告）。所以这里**不能拿 actions 和 hit 比大小**，
+   那会得出「动作比命中还多」的怪结论 —— 而它看着像缺陷，其实是设计。 */
+function renderFlow(f, policyCount){
+  const node = (lab, num, sub, cls, href) =>
+    `<a class="fnode ${cls}" href="${href}">
+       <div class="nlab">${lab}</div>
+       <div class="nnum">${num}</div>
+       <div class="nsub">${sub}</div>
+     </a>`;
+  const arrow = '<div class="farrow">→</div>';
+
+  // 表态数应当等于事件数（每个事件一次）。少于事件数，就说明有事件没走完管道 ——
+  // 那才是真问题，值得标出来。
+  const actCls = f.actions < f.events ? 'warn' : '';
+  const reactCls = f.pending > 0 ? 'warn' : (f.reacted > 0 ? 'ok' : 'dim');
+
+  $('#flowChart').innerHTML = [
+    node('事件', f.events, '条判定来自这些事件', f.events ? '' : 'dim', '#panes'),
+    arrow,
+    node('判定', f.judgments, `命中 ${f.hit} · 未命中 ${f.miss} · 没做成 ${f.error}`,
+         f.error ? 'warn' : '', '#panes'),
+    arrow,
+    node('表态', f.actions,
+         f.actions < f.events ? `⚠ 少于事件数 ${f.events}` : '每个事件一次，含「没发现问题」',
+         actCls, '#todo'),
+    arrow,
+    node('留痕', f.judgments, `每条策略各留一条（${policyCount} 条策略）`, '', '#panes'),
+    arrow,
+    node('人', f.reacted, f.pending ? `还欠 ${f.pending} 条表态` : '都表过态了', reactCls, '#todo'),
+  ].join('');
+}
+
+/* ── 待办 ───────────────────────────────────────────── */
+function renderTodo(rows){
+  const box = $('#todoList');
+  $('#todoCount').textContent = rows.length ? `${rows.length} 条` : '';
+
+  if(!rows.length){
+    box.innerHTML = '<div class="card empty">没有待表态的判断。<br>'
+      + '<span style="font-size:12px">这不是「一切都好」—— 也可能是判据根本没跑过。看上面运行图里的「策略」一格。</span></div>';
+    return;
+  }
+
+  box.innerHTML = `<div class="batchbar" id="batchBar" hidden>
+      <span>已选 <b id="batchN">0</b> 条</span>
+      <button class="yes" data-batch="adopted">采纳所选</button>
+      <button class="no" data-batch="rejected">否定所选</button>
+      <button data-batch="ignored">无视所选</button>
+      <button data-batch-clear>清空</button>
+      <span class="hint">批量会在留痕里写明「一次 N 条」—— 一键全选和逐条看过的信息量不同，事后要能分得清</span>
+    </div>` + rows.map(r => {
+    const ev = r.evidence.map(e =>
+      `<li><span class="k">${esc(e.kind)}</span><span class="d">${esc(e.detail)}`
+      + (e.ref ? ` <code>${esc(e.ref)}</code>` : '') + '</span></li>').join('');
+
+    const reacted = r.reaction
+      ? `<div class="reacted"><span class="tag ok">已回写 ${REACT[r.reaction]}</span>`
+        + (r.reactionNote ? `<b>${esc(r.reactionNote)}</b>` : '')
+        + ` <button data-undo="${r.id}">改</button></div>`
+      : `<div class="act" data-id="${r.id}">
+           <input placeholder="为什么（判据要靠它改进，会进库）" data-note="${r.id}">
+           <button class="yes" data-react="adopted" data-id="${r.id}">采纳</button>
+           <button class="no" data-react="rejected" data-id="${r.id}">否定</button>
+           <button data-react="ignored" data-id="${r.id}">无视</button>
+         </div>`;
+
+    return `<div class="card">
+      <div class="row tight">
+        ${r.reaction ? '' : `<input type="checkbox" class="pick" data-pick="${r.id}" title="选中后可批量表态">`}
+        <span class="tag ${r.outcome}">${OUTCOME[r.outcome]}</span>
+        <span class="tag policy">${esc(r.policyId)} @ ${esc(r.policyVersion)}</span>
+        ${r.origin === 'shadow' ? '<span class="tag shadow">影子</span>' : ''}
+        ${r.action ? `<span class="tag shadow">${esc(r.action)} · 级别 ${r.actionLevel}</span>` : ''}
+        <span class="meta">${esc(r.eventId)}</span>
+      </div>
+      <div class="concl">${esc(r.reason || '（没有给出说明）')}</div>
+      ${r.precondition ? `<div class="pre">⚠️ 成立前提：${esc(r.precondition)}</div>` : ''}
+      ${renderCorroboration(r.corroboration)}
+      <details><summary>依据 ${r.evidence.length} 条</summary><ul class="ev">${ev}</ul></details>
+      ${reacted}
+    </div>`;
+  }).join('');
+}
+
+/** 当前勾选的行 —— 批量条的显示与取值都靠它 */
+function pickedIds(){
+  return [...document.querySelectorAll('[data-pick]:checked')].map(x => +x.dataset.pick);
+}
+
+function refreshBatchBar(){
+  const ids = pickedIds();
+  const bar = document.getElementById('batchBar');
+  if(!bar) return;
+  bar.hidden = ids.length === 0;
+  document.getElementById('batchN').textContent = ids.length;
+}
+
+/**
+ * 旁证：另一条策略也指向了同一个文件。
+ *
+ * ⚠️ 措辞要小心 —— 它证明的是「不是幻觉」，不是「判断正确」。
+ * 一条判据可以稳定地、被两个视角一致地判错，所以它只用来决定
+ * 「哪些判断值得优先看」，绝不写成「已确认」。
+ */
+function renderCorroboration(c){
+  if (!c || !c.by || c.by.length === 0) return '';
+  return `<div class="corr">另有 <b>${c.by.length}</b> 条策略（${c.by.map(x=>`<code>${esc(x)}</code>`).join('、')}）
+    也指向同一处 —— 这只说明<b>它不是某一个视角的幻觉</b>，不代表它是对的</div>`;
+}
+
+async function react(id, reaction){
+  const note = document.querySelector(`[data-note="${id}"]`)?.value || undefined;
+  await api('/api/reaction', {
+    method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({ judgmentId:+id, reaction, note })
+  });
+  await load();
+}
+
+/** 批量表态：一次给一批。服务端会在留痕里追加「批量表态（一次 N 条）」 */
+async function reactBatch(ids, reaction){
+  if(!ids.length) return;
+  const res = await api('/api/reaction', {
+    method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({ judgmentIds:ids, reaction })
+  });
+  if(res && res.error){ toast(res.error); return; }
+  await load();
+}
+
+/** 轻提示 —— 失败要说出来，不能静默什么都不发生 */
+function toast(msg){
+  let el = document.getElementById('toast');
+  if(!el){ el = document.createElement('div'); el.id = 'toast'; document.body.appendChild(el); }
+  el.textContent = msg;
+  el.classList.add('on');
+  setTimeout(() => el.classList.remove('on'), 4000);
+}
+
+document.addEventListener('click', async e => {
+  const btn = e.target.closest('button');
+  if(!btn) return;
+  try{
+    if(btn.dataset.batch) await reactBatch(pickedIds(), btn.dataset.batch);
+    if(btn.hasAttribute('data-batch-clear')){
+      document.querySelectorAll('[data-pick]').forEach(x => { x.checked = false; });
+      refreshBatchBar();
+    }
+    if(btn.dataset.react) await react(btn.dataset.id, btn.dataset.react);
+    if(btn.dataset.undo){
+      btn.closest('.reacted').outerHTML =
+        `<div class="act" data-id="${btn.dataset.undo}">
+           <input placeholder="为什么（判据要靠它改进，会进库）" data-note="${btn.dataset.undo}">
+           <button class="yes" data-react="adopted" data-id="${btn.dataset.undo}">采纳</button>
+           <button class="no" data-react="rejected" data-id="${btn.dataset.undo}">否定</button>
+           <button data-react="ignored" data-id="${btn.dataset.undo}">无视</button>
+         </div>`;
+    }
+  }catch(err){ alert(err.message); }
+});
+
+/* ── 分布条（受样本量阈值管） ────────────────────────── */
+function renderBar(s){
+  if(s.total < MIN_SAMPLE){
+    return `<i class="bar-note">样本 ${s.total} &lt; ${MIN_SAMPLE}，不画 —— 画出来会把噪声当模式</i>`;
+  }
+  const p = n => (n / s.total * 100).toFixed(1) + '%';
+  return `<div class="bar" title="命中 ${s.hit} · 未命中 ${s.miss} · 没做成 ${s.error}">
+    <i class="h" style="width:${p(s.hit)}"></i>
+    <i class="m" style="width:${p(s.miss)}"></i>
+    <i class="e" style="width:${p(s.error)}"></i>
+  </div>`;
+}
+
+/* ── 观察 ───────────────────────────────────────────── */
+function renderStats(rows){
+  $('#tabWatchN').textContent = rows.length ? rows.length : '';
+  $('#statsTable tbody').innerHTML = rows.length ? rows.map(s => {
+    // 「拦不住 / 没什么可拦 / 根本没开」三者看起来一样，判据由服务端给（policy/health.ts）
+    const h = s.health || { health: 'ok', note: '' };
+    const warn = h.health === 'off' ? 'off' : (h.health === 'neverHit' ? 'err' : '');
+    const note = h.health === 'ok' ? '' :
+      `<div class="health ${warn}">${esc(h.note)}</div>`;
+
+    return `<tr>
+    <td><code>${esc(s.policyId)}</code><br><span class="meta">${esc(s.policyVersion)}</span>${note}</td>
+    <td class="num">${s.total}</td>
+    <td class="num ${s.reviewed ? '' : 'dim'}">${s.reviewed}</td>
+    <td class="num">${s.hit}</td>
+    <td class="num dim">${s.miss}</td>
+    <td class="num ${s.error ? 'err' : 'dim'}">${s.error}</td>
+    <td class="num ${s.rejected ? '' : 'dim'}">${s.rejected}</td>
+    <td>${renderBar(s)}</td>
+  </tr>`;
+  }).join('') : '<tr><td colspan="8" style="text-align:center;color:#858c9c;padding:22px">还没有评估记录</td></tr>';
+}
+
+/* ── 判断记录 ───────────────────────────────────────── */
+function renderLog(rows){
+  $('#tabLogN').textContent = rows.length;
+
+  $('#logList').innerHTML = rows.length ? rows.map(r => {
+    const ev = r.evidence.map(e =>
+      `<li><span class="k">${esc(e.kind)}</span><span class="d">${esc(e.detail)}`
+      + (e.ref ? ` <code>${esc(e.ref)}</code>` : '') + '</span></li>').join('');
+
+    return `<div class="card">
+      <div class="row tight">
+        <span class="meta">#${r.id}</span>
+        <span class="tag ${r.outcome}">${OUTCOME[r.outcome]}</span>
+        <span class="tag policy">${esc(r.policyId)} @ ${esc(r.policyVersion)}</span>
+        ${r.origin === 'shadow' ? '<span class="tag shadow">影子</span>' : ''}
+        ${r.reaction ? `<span class="tag ok">${REACT[r.reaction]}</span>` : ''}
+        <span class="meta">${esc(r.eventId)}</span>
+      </div>
+      <div class="concl">${esc(r.reason || '（没有给出说明）')}</div>
+      <details><summary>依据 ${r.evidence.length} 条 · ${esc(r.createdAt.slice(0,16).replace('T',' '))}</summary>
+        <ul class="ev">${ev}</ul></details>
+    </div>`;
+  }).join('') : '<div class="card empty">没有符合条件的记录</div>';
+}
+
+/* ── tab 切换 ───────────────────────────────────────── */
+document.querySelectorAll('.tabs button').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
+    document.querySelectorAll('.pane').forEach(p =>
+      p.classList.toggle('on', p.id === 'pane-' + b.dataset.pane));
+  });
+});
+
+/* ── 加载 ───────────────────────────────────────────── */
+async function load(){
+  const [ov, pend] = await Promise.all([api('/api/overview'), api('/api/pending')]);
+
+  $('#env').textContent = `${ov.dbPath} · 策略 ${ov.policies.length} 条`;
+
+  if(!ov.model.configured){
+    $('#modelWarn').innerHTML = '<div class="banner">'
+      + '判断模型<b>未配置</b>（LLM_BASE_URL / LLM_API_KEY / LLM_MODEL）。'
+      + '依赖模型的判据会一律落「判断没做成」—— <b>这不是「没问题」</b>，'
+      + '它只是说明这一路判断没有真的发生。</div>';
+  }
+
+  renderFlow(ov.flow, ov.policies.length);
+  renderTodo(pend.rows);
+  renderStats(ov.stats);
+
+  const sel = $('#fPolicy');
+  if(sel.options.length <= 1){
+    ov.policies.forEach(p => sel.add(new Option(p.id, p.id)));
+    ov.stats.forEach(s => {
+      if(![...sel.options].some(o => o.value === s.policyId)) sel.add(new Option(s.policyId, s.policyId));
+    });
+  }
+
+  const q = new URLSearchParams({ limit:'100' });
+  if(sel.value) q.set('policy', sel.value);
+  if($('#fOutcome').value) q.set('outcome', $('#fOutcome').value);
+
+  let { rows } = await api('/api/judgments?' + q);
+  if($('#fPending').checked) rows = rows.filter(r => !r.reaction);
+
+  renderLog(rows);
+}
+
+['#fPolicy','#fOutcome','#fPending'].forEach(s => $(s).addEventListener('change', load));
+
+// 勾选框在动态渲染出来的卡片里，所以用事件委托而不是逐个绑定
+document.addEventListener('change', e => {
+  if(e.target && e.target.matches && e.target.matches('[data-pick]')) refreshBatchBar();
+});
+
+load().catch(e => {
+  document.querySelector('main').insertAdjacentHTML('afterbegin',
+    `<div class="banner">加载失败：${esc(e.message)}</div>`);
+});
+
+// 第一次来就邀请走一遍。走过一次、或点过「以后再说」之后不再自动弹 ——
+// 引导的价值在于「第一次看得懂」，反复弹就变成打扰，而打扰会让人连页面都不想开。
+if(!localStorage.getItem(TOUR_KEY)) $('#tourInvite').hidden = false;
+
+/* ── 漫游的事件绑定（放最后：`$` 在工具区才定义） ────── */
+$('#tourNext').addEventListener('click', () => {
+  if(tourAt >= TOUR.length - 1) return endTour();
+  tourAt++;
+  setPane(TOUR[tourAt].pane || 'watch');
+  placeTour();
+});
+$('#tourPrev').addEventListener('click', () => {
+  if(tourAt === 0) return;
+  tourAt--;
+  setPane(TOUR[tourAt].pane || 'watch');
+  placeTour();
+});
+$('#tourSkip').addEventListener('click', endTour);
+$('#tourStart').addEventListener('click', () => startTour(0));
+$('#tourLater').addEventListener('click', () => {
+  $('#tourInvite').hidden = true;
+  localStorage.setItem(TOUR_KEY, 'dismissed');
+});
+$('#replayTour').addEventListener('click', e => { e.preventDefault(); startTour(0); });
+addEventListener('resize', () => { if(!$('#tourPop').hidden) placeTour(); });
+addEventListener('keydown', e => {
+  if($('#tourPop').hidden) return;
+  if(e.key === 'Escape') endTour();
+  if(e.key === 'ArrowRight') $('#tourNext').click();
+  if(e.key === 'ArrowLeft') $('#tourPrev').click();
+});
+</script>
+</body>
+</html>

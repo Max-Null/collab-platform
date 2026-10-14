@@ -1,0 +1,16 @@
+{
+  "id": "mock-mr-002",
+  "source": "mock",
+  "project": "my-group/my-frontend",
+  "mrIid": 102,
+  "title": "对话流：修正工具卡的技能徽章位置",
+  "description": "把技能徽章从标题行挪到副标题，纯样式调整。",
+  "author": "lisi",
+  "targetBranch": "main",
+  "changedFiles": [
+    "frontend/src/chat/MessageFeed.vue",
+    "frontend/src/styles/chat.scss"
+  ],
+  "diff": "diff --git a/frontend/src/chat/MessageFeed.vue b/frontend/src/chat/MessageFeed.vue\nindex aa11bb2..cc33dd4 100644\n--- a/frontend/src/chat/MessageFeed.vue\n+++ b/frontend/src/chat/MessageFeed.vue\n@@ -12,8 +12,8 @@\n     <div class=\"tool-card__body\">\n       <span class=\"tool-card__name\">{{ tool.name }}</span>\n-      <span class=\"tool-card__skill\">{{ tool.skillName }}</span>\n     </div>\n+    <span v-if=\"tool.skillName\" class=\"tool-card__skill-badge\">{{ tool.skillName }}</span>\n   </div>\n </template>\ndiff --git a/frontend/src/styles/chat.scss b/frontend/src/styles/chat.scss\nindex bb22cc3..dd44ee5 100644\n--- a/frontend/src/styles/chat.scss\n+++ b/frontend/src/styles/chat.scss\n@@ -40,8 +40,9 @@\n-.tool-card__skill {\n-  color: $text-secondary;\n+.tool-card__skill-badge {\n+  display: inline-block;\n+  padding: 0 6px;\n+  color: $text-tertiary;\n   font-size: 12px;\n }\n",
+  "occurredAt": "2026-10-13T04:05:00.000Z"
+}

@@ -1,0 +1,17 @@
+{
+  "id": "mock-mr-001",
+  "source": "mock",
+  "project": "my-group/my-app",
+  "mrIid": 101,
+  "title": "对账中心：调整发票状态字段",
+  "description": "给 reconciliation_invoice 加一个状态字段，顺便补个索引。",
+  "author": "zhangsan",
+  "targetBranch": "main",
+  "changedFiles": [
+    "backend/doc/sql/10_reconciliation_tables.sql",
+    "backend/modules/reconciliation/src/main/java/com/example/reconciliation/entity/Invoice.java",
+    "backend/modules/reconciliation/src/main/resources/mapper/InvoiceMapper.xml"
+  ],
+  "diff": "diff --git a/backend/doc/sql/10_reconciliation_tables.sql b/backend/doc/sql/10_reconciliation_tables.sql\nindex 1a2b3c4..5d6e7f8 100644\n--- a/backend/doc/sql/10_reconciliation_tables.sql\n+++ b/backend/doc/sql/10_reconciliation_tables.sql\n@@ -18,7 +18,9 @@ CREATE TABLE reconciliation_invoice (\n   invoice_no  VARCHAR(64)   NOT NULL COMMENT '发票号',\n   amount      DECIMAL(18,2) NOT NULL COMMENT '金额',\n+  status      TINYINT       NOT NULL DEFAULT 0 COMMENT '状态：0 待开票 1 已开票 2 已红冲',\n   created_at  DATETIME      NOT NULL,\n   PRIMARY KEY (id)\n-) COMMENT='对账发票表';\n+) COMMENT='对账发票表';\n+\n+CREATE INDEX idx_invoice_status ON reconciliation_invoice(status);\ndiff --git a/backend/modules/reconciliation/src/main/java/com/example/reconciliation/entity/Invoice.java b/backend/modules/reconciliation/src/main/java/com/example/reconciliation/entity/Invoice.java\nindex 2b3c4d5..6e7f8a9 100644\n--- a/backend/modules/reconciliation/src/main/java/com/example/reconciliation/entity/Invoice.java\n+++ b/backend/modules/reconciliation/src/main/java/com/example/reconciliation/entity/Invoice.java\n@@ -24,4 +24,7 @@ public class Invoice {\n     /** 金额 */\n     private BigDecimal amount;\n+\n+    /** 状态：0 待开票 1 已开票 2 已红冲 */\n+    private Integer status;\n }\ndiff --git a/backend/modules/reconciliation/src/main/resources/mapper/InvoiceMapper.xml b/backend/modules/reconciliation/src/main/resources/mapper/InvoiceMapper.xml\nindex 3c4d5e6..7f8a9b0 100644\n--- a/backend/modules/reconciliation/src/main/resources/mapper/InvoiceMapper.xml\n+++ b/backend/modules/reconciliation/src/main/resources/mapper/InvoiceMapper.xml\n@@ -8,6 +8,7 @@\n     <resultMap id=\"InvoiceMap\" type=\"Invoice\">\n         <result column=\"invoice_no\" property=\"invoiceNo\"/>\n         <result column=\"amount\"     property=\"amount\"/>\n+        <result column=\"status\"     property=\"status\"/>\n     </resultMap>\n",
+  "occurredAt": "2026-10-13T03:20:00.000Z"
+}

@@ -1,0 +1,7 @@
+{
+  "version": "0.1.0",
+  "updatedAt": "2026-10-13",
+  "note": "gather 是取数白名单，只能写客观来源（changed_files / diff）。MR 标题与描述由提交者自己写、随时可以改，属于主张而不是依据 —— 把它们写进 gather 会在装配时直接报错。",
+  "instruction": "特别留意：提交消息说「只改文案 / 只调整日志 / 小改动」，但实际动了鉴权、配置、库表或 CI 的情况。",
+  "gather": ["changed_files", "diff"]
+}

@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>行途开源矩阵 · 调研报告（2026-10-14）</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --panel:#fff; --ink:#171b24; --ink-2:#454d5e; --ink-3:#858c9c;
+    --line:#e6e8ee; --line-2:#eef0f5;
+    --brand:#3557d6; --brand-soft:#eef2ff;
+    --code:#c0522a; --doc:#2f7a5a; --todo:#9a6c00; --ref:#98a0b0;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --radius:12px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);line-height:1.75;
+    font:15px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  code{font-family:var(--mono);font-size:.88em;background:#eef1f6;padding:1px 6px;border-radius:5px;color:#2c3444}
+
+  .wrap{max-width:1000px;margin:0 auto;padding:0 24px 80px}
+
+  /* ── 封面 ───────────────────────────────── */
+  .hero{background:linear-gradient(150deg,#1c2440 0%,#2b3a6b 55%,#3557d6 100%);
+    color:#fff;padding:64px 24px 56px;margin-bottom:0}
+  .hero .inner{max-width:1000px;margin:0 auto;padding:0 24px}
+  .hero .kicker{font-size:13px;letter-spacing:2px;opacity:.7;font-family:var(--mono)}
+  .hero h1{font-size:38px;margin:14px 0 10px;font-weight:700;letter-spacing:-.5px}
+  .hero .sub{font-size:16px;opacity:.85;max-width:660px}
+  .hero .facts{display:flex;gap:38px;margin-top:32px;flex-wrap:wrap}
+  .hero .fact .n{font-size:30px;font-weight:700;font-family:var(--mono)}
+  .hero .fact .l{font-size:12.5px;opacity:.75}
+
+  section{margin-top:52px}
+  h2{font-size:21px;margin:0 0 6px;font-weight:680;letter-spacing:-.2px;
+    display:flex;align-items:baseline;gap:10px}
+  h2 .no{font-family:var(--mono);font-size:14px;color:var(--brand);
+    background:var(--brand-soft);padding:2px 8px;border-radius:6px;font-weight:600}
+  h3{font-size:16px;margin:28px 0 8px;font-weight:640}
+  .lede{color:var(--ink-2);font-size:14px;margin:0 0 18px;max-width:760px}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:20px 22px;margin-bottom:14px}
+  .card > :first-child{margin-top:0} .card > :last-child{margin-bottom:0}
+
+  table{width:100%;border-collapse:collapse;font-size:14px;background:var(--panel);
+    border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin:0 0 14px}
+  th,td{padding:10px 13px;text-align:left;border-bottom:1px solid var(--line-2);vertical-align:top}
+  th{font-size:12px;color:var(--ink-3);font-weight:600;background:#fafbfd;white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+  td.r{text-align:right;font-family:var(--mono);white-space:nowrap}
+
+  .quote{border-left:3px solid var(--brand);background:var(--brand-soft);
+    padding:12px 18px;border-radius:0 8px 8px 0;margin:14px 0;font-size:14.5px;color:#25305a}
+  .quote b{color:#141c38}
+  .quote .from{display:block;font-size:12px;color:#6b78a8;margin-top:6px;font-family:var(--mono)}
+
+  .badge{display:inline-block;font-size:11.5px;padding:1px 8px;border-radius:20px;
+    font-family:var(--mono);white-space:nowrap}
+  .b-code{background:#fdf1ec;color:var(--code)}
+  .b-doc{background:#eaf5f0;color:var(--doc)}
+  .b-todo{background:#fdf6e3;color:var(--todo)}
+  .b-ref{background:#f2f4f7;color:var(--ref)}
+
+  /* ── 时间线 ─────────────────────────────── */
+  .tl{position:relative;padding-left:26px;margin:18px 0}
+  .tl::before{content:"";position:absolute;left:6px;top:6px;bottom:6px;width:2px;background:var(--line)}
+  .tl .item{position:relative;margin-bottom:14px}
+  .tl .item::before{content:"";position:absolute;left:-24px;top:8px;width:10px;height:10px;
+    border-radius:50%;background:#fff;border:2px solid var(--brand)}
+  .tl .r{font-size:12px;font-family:var(--mono);color:var(--brand)}
+  .tl .t{font-size:14.5px;font-weight:560}
+
+  /* ── 条形图（纯 CSS，零依赖） ─────────────── */
+  .bars{margin:8px 0 4px}
+  .bar{display:flex;align-items:center;gap:12px;margin-bottom:9px;font-size:13.5px}
+  .bar .lab{width:132px;flex:none;color:var(--ink-2)}
+  .bar .track{flex:1;height:26px;background:#f0f2f6;border-radius:6px;overflow:hidden}
+  .bar .fill{height:100%;border-radius:6px;display:flex;align-items:center;
+    padding-left:10px;color:#fff;font-family:var(--mono);font-size:12.5px;font-weight:600}
+  .bar .val{width:54px;text-align:right;font-family:var(--mono);font-size:13px;color:var(--ink-2)}
+  .f-code{background:var(--code)} .f-doc{background:var(--doc)}
+  .f-todo{background:var(--todo)} .f-ref{background:var(--ref)}
+
+  /* ── 环形（CSS conic-gradient，零依赖） ───── */
+  .donut-wrap{display:flex;gap:36px;align-items:center;flex-wrap:wrap}
+  .donut{width:176px;height:176px;border-radius:50%;flex:none;position:relative}
+  .donut::after{content:"";position:absolute;inset:30px;background:var(--panel);border-radius:50%}
+  .donut .mid{position:absolute;inset:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;z-index:2}
+  .donut .mid .n{font-size:30px;font-weight:700;font-family:var(--mono);line-height:1.1}
+  .donut .mid .l{font-size:11.5px;color:var(--ink-3)}
+  .legend{font-size:13.5px}
+  .legend div{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+  .legend i{width:11px;height:11px;border-radius:3px;flex:none}
+
+  /* ── 判据卡 ─────────────────────────────── */
+  .rules{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+  .rule{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:16px 18px;border-top:3px solid var(--brand)}
+  .rule .t{font-weight:620;font-size:14.5px;margin-bottom:7px}
+  .rule .d{font-size:13.5px;color:var(--ink-2)}
+  .rule .w{font-size:12px;color:var(--ink-3);font-family:var(--mono);margin-top:9px}
+
+  .foot{margin-top:60px;padding-top:22px;border-top:1px solid var(--line);
+    font-size:13px;color:var(--ink-3)}
+  .foot a{color:var(--brand);text-decoration:none;border-bottom:1px solid #c8d3f5}
+  @media print{ body{background:#fff} .hero{background:#2b3a6b} section{break-inside:avoid} }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="inner">
+    <div class="kicker">COMPETITIVE RESEARCH · 2026-10-14</div>
+    <h1>行途开源矩阵 · 调研报告</h1>
+    <div class="sub">
+      为一个「人和 Agent 共用的协作平台」找参考实现。读完九轮之后，
+      真正值钱的不是「他们做了什么」，而是<b>几个不相干的项目反复撞出同一条判据</b>这件事。
+    </div>
+    <div class="facts">
+      <div class="fact"><div class="n">9</div><div class="l">轮细读</div></div>
+      <div class="fact"><div class="n">5</div><div class="l">个仓库（git clone 一手）</div></div>
+      <div class="fact"><div class="n">48</div><div class="l">条结论</div></div>
+      <div class="fact"><div class="n">35</div><div class="l">条有落点</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="wrap">
+
+<section>
+  <h2><span class="no">01</span>这次调研怎么做的</h2>
+  <p class="lede">
+    起点是找「团队模式 / 多代理」的参考。作者 <code>xingtu1996</code>（行途，一线技术经理仍在写代码）
+    有十几个公开仓，其中五个直接 <code>git clone</code> 下来读了原文。
+  </p>
+  <div class="card">
+    <p style="margin:0 0 10px;font-size:14px;color:var(--ink-2)">
+      <b>一个方法上的选择</b>：GitHub 页面直连超时，但 <code>api.github.com</code> 与 <code>git clone</code> 都通。
+      所以走的是「拉仓库读文件」，而不是「抓页面读渲染结果」——读到的是<b>一手原文</b>，不是二手介绍。
+    </p>
+    <p style="margin:0;font-size:14px;color:var(--ink-2)">
+      另一个是<b>先定位再深读</b>：我们平台是「闸门 + 账本」，他们多数仓是「多代理编排器」。
+      位置不同，所以先花一轮把仓库矩阵摸清，再挑与「闸门/账本/治理/记忆」最近的九块读。
+    </p>
+  </div>
+
+  <h3>仓库矩阵</h3>
+  <table>
+    <thead><tr><th>仓库</th><th>定位</th><th>我们读了什么</th></tr></thead>
+    <tbody>
+      <tr><td><code>xingtu-ai-engineering</code></td><td>方法论旗舰仓（理念/方法/工程/治理/会话/样板）</td><td>治理、上下文工程、循环工程、门禁、三形态选型</td></tr>
+      <tr><td><code>xingtu-skills</code></td><td>127 个 SKILL.md 的技能聚合仓</td><td>编排、输出契约、隐形契约审计、对抗审查、会话沉淀、规则管家</td></tr>
+      <tr><td><code>xingtu-harness</code></td><td>8 个 submodule 的聚合仓，与 DSH 互补</td><td>组织方式（子模块目录 <code>--depth 1</code> 下为空）</td></tr>
+      <tr><td><code>xingtu-automations</code></td><td>多 Agent 定时任务 Registry（17 条，工具中立）</td><td>任务的五要素与「完成判定认落盘凭证」</td></tr>
+      <tr><td><code>xingtu-sdd</code></td><td>规格驱动 + 实践案例库</td><td>案例 003 跨 Agent 口径漂移、案例 004 Team 编排</td></tr>
+      <tr><td style="color:#98a0b0">mcps / hooks / prompts / cli / design</td><td style="color:#98a0b0">均已归档</td><td style="color:#98a0b0">未读</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="no">02</span>九轮读了什么</h2>
+  <p class="lede">每轮一个主题，从「多代理怎么干活」一路读到「静默失效怎么防」。</p>
+
+  <div class="tl">
+    <div class="item"><div class="r">第 1 轮</div><div class="t">仓库矩阵与多代理核心资产</div>
+      <div style="font-size:13.5px;color:var(--ink-2)">编排入口的六条铁律、子代理的输出契约、三形态选型</div></div>
+    <div class="item"><div class="r">第 2 轮</div><div class="t">治理四件套</div>
+      <div style="font-size:13.5px;color:var(--ink-2)">「规则是愿望，hook 才是墙」· 安全三条件 · 复制即第二份 SSoT</div></div>
+    <div class="item"><div class="r">第 3 轮</div><div class="t">常驻税与验证成本</div>
+      <div style="font-size:13.5px;color:var(--ink-2)"><b>loops win where verification is cheap</b> —— 解释了我们的观察期为什么跑不动</div></div>
+    <div class="item"><div class="r">第 4 轮</div><div class="t">常驻配置的减法治理</div>
+      <div style="font-size:13.5px;color:var(--ink-2)">膨胀的真代价是「模型选择性忽略」，不是 token</div></div>
+    <div class="item"><div class="r">第 5 轮</div><div class="t">会话与记忆</div>
+      <div style="font-size:13.5px;color:var(--ink-2)">记忆缺一条毕业路径：记录 → 记忆 → 策略</div></div>
+    <div class="item"><div class="r">第 6 轮</div><div class="t">对抗审查</div>
+      <div style="font-size:13.5px;color:var(--ink-2)"><b>交叉验证 = ≥2 个视角独立发现</b> —— 一种不需要人的置信度信号</div></div>
+    <div class="item"><div class="r">第 7 轮</div><div class="t">隐形契约审计</div>
+      <div style="font-size:13.5px;color:var(--ink-2)"><b>唯一一份与我们题目相同的材料</b>：专讲静默失效</div></div>
+    <div class="item"><div class="r">第 8 轮</div><div class="t">可证伪闸门</div>
+      <div style="font-size:13.5px;color:var(--ink-2)">结论只允许 为真 / 为假 / <b>条件成立（注明已知缺口）</b></div></div>
+    <div class="item"><div class="r">第 9 轮</div><div class="t">实践案例</div>
+      <div style="font-size:13.5px;color:var(--ink-2)">「叠加不重构」· 冲突仲裁 · 案例要有「踩坑 → 规则」回指</div></div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">03</span>最有价值的几条判据</h2>
+  <p class="lede">
+    这些都不是「他们说我们该怎么做」，而是<b>读的时候能立刻对上我们某个具体缺口</b>的那些。
+  </p>
+
+  <div class="rules">
+    <div class="rule">
+      <div class="t">验证成本决定循环能不能转</div>
+      <div class="d">「loops win where verification is cheap」。我们的观察期要人逐条回写反应，那是高成本验证 —— <b>这是成本问题，不是意愿问题</b>，所以「再强调一次请回写」解不开。</div>
+      <div class="w">→ 观察期加「看过」分母（已落地）</div>
+    </div>
+    <div class="rule">
+      <div class="t">规则是愿望，hook 才是墙</div>
+      <div class="d">策略就是那堵墙，而<b>处置级别就是墙的高度</b>：级别 1 不是墙（愿望），级别 3 才是。于是「观察期」有了另一层说法 —— 把愿望升级成墙的过程。</div>
+      <div class="w">→ 设计 §3.7</div>
+    </div>
+    <div class="rule">
+      <div class="t">一个标签若能对应两种截然不同的现实，它就不是合格的探针</div>
+      <div class="d">他们的例子：<code>miss</code> 同时表示「查了没命中」与「根本没启用」。<b>我们缺 <code>off</code> 这一态</b> —— 「策略被停用」和「跑了但没事件」现在长得一样。</div>
+      <div class="w">→ T11（与 T4 合成一条线）</div>
+    </div>
+    <div class="rule">
+      <div class="t">结论只允许三态，而我们的第三态是错的</div>
+      <div class="d">他们要的三态是 <b>为真 / 为假 / 条件成立（注明已知缺口）</b>。我们的 <code>error</code> 说的是「<b>这次没做成</b>」（过程），缺的是「<b>结论对但有前提</b>」（结论）。</div>
+      <div class="w">→ T13 · 设计 §3.11 三</div>
+    </div>
+    <div class="rule">
+      <div class="t">删掉它会犯错吗？不会 → 删 / 沉降</div>
+      <div class="d">把问题从「它有没有用」换成「<b>没有它会怎样</b>」—— 后者人答得出来，前者常常答不出来。与「可检验」「可执行」合成入口检查三条。</div>
+      <div class="w">→ 设计 §3.10</div>
+    </div>
+    <div class="rule">
+      <div class="t">膨胀的真代价不是 token，是「模型会选择性忽略」</div>
+      <div class="d">选择性忽略<b>不报错</b>：模型照样自信地给出判断，只是有些规则它已经不再真的在看了。我们的记忆治理四条触发管的全是「哪一条该退场」，<b>没有一条管「一共能装多少条」</b>。</div>
+      <div class="w">→ 设计 §3.10</div>
+    </div>
+    <div class="rule">
+      <div class="t">交叉验证：一种不需要人的置信度信号</div>
+      <div class="d">≥2 个独立视角发现同一件事 —— 至少证明它<b>不是某个视角的幻觉</b>。⚠️ 但它证明的不是「判断正确」：一条判据可以稳定地、被两个视角一致地判错。</div>
+      <div class="w">→ T9</div>
+    </div>
+    <div class="rule">
+      <div class="t">加一条新策略应当是「纯新增」</div>
+      <div class="d">他们把一个抽象层的验收项定成「<b>原有组件零改动</b>」—— 把「没破坏现状」从承诺变成机器可查的验收项。若加策略需要改管道，那说明<b>缺的是扩展点</b>。</div>
+      <div class="w">→ 设计 §3.11 一</div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">04</span>落地情况</h2>
+  <p class="lede">
+    48 条结论里有 35 条有落点。回指一遍才知道 —— 这件事不做，半年后会以为读了九轮什么都没改。
+  </p>
+
+  <div class="card">
+    <div class="donut-wrap">
+      <div class="donut" style="background:conic-gradient(
+        var(--code) 0 52.5deg,
+        var(--doc) 52.5deg 157.5deg,
+        var(--todo) 157.5deg 262.5deg,
+        var(--ref) 262.5deg 360deg)">
+        <div class="mid"><div class="n">35</div><div class="l">/ 48 有落点</div></div>
+      </div>
+      <div class="legend">
+        <div><i style="background:var(--code)"></i>改了代码 —— 7 条 <span style="color:#98a0b0">（带提交）</span></div>
+        <div><i style="background:var(--doc)"></i>改了文档 —— 14 条 <span style="color:#98a0b0">（设计 / 方案章节）</span></div>
+        <div><i style="background:var(--todo)"></i>进了待办 —— 14 条 <span style="color:#98a0b0">（T1–T14）</span></div>
+        <div><i style="background:var(--ref)"></i>只是对照 —— 13 条 <span style="color:#98a0b0">（已在这么做，属确认）</span></div>
+      </div>
+    </div>
+  </div>
+
+  <h3>那 13 条「只是对照」不是浪费</h3>
+  <div class="card">
+    <p style="margin:0;font-size:14px;color:var(--ink-2)">
+      它们多数是「我们已经在这么做」的<b>独立佐证</b>。最典型的一条：<b>「完成判定认落盘凭证，不认模型自述」</b> ——
+      四个不相干的场景各撞了一遍（他们的定时任务、他们的对抗审查、他们案例 003、我们自己的
+      <code>error</code> 三态）。<b>四个项目各撞一遍的坑，比任何一家的最佳实践都更值得当判据。</b>
+    </p>
+  </div>
+
+  <h3>回指过程揪出四条「以为落了、其实没落」</h3>
+  <table>
+    <thead><tr><th>以为落了</th><th>实际</th><th>处置</th></tr></thead>
+    <tbody>
+      <tr><td>「删掉它会犯错吗」</td><td>只在调研笔记里</td><td><span class="badge b-doc">补进设计 §3.10</span></td></tr>
+      <tr><td>「无拦截价值的沉淀不必反哺」</td><td>只在调研笔记里</td><td><span class="badge b-doc">补进设计 §3.10</span></td></tr>
+      <tr><td>「待拍板必须带默认值」</td><td>设计 §六 那 5 条没写默认值</td><td><span class="badge b-doc">逐条补上</span></td></tr>
+      <tr><td>「五类靶」</td><td>只在调研笔记里</td><td><span class="badge b-doc">补进设计 §3.11 五</span></td></tr>
+    </tbody>
+  </table>
+  <div class="quote">
+    原因是一样的：写调研笔记的时候，「对我们的意义」这一段写得越顺，越容易让人以为<b>写完就等于落了</b>。
+    而「落」是指它出现在<b>会被执行的地方</b> —— 设计文档的判据里、待办表里、代码里。
+    <span class="from">这正是第 7 轮那条「注释记的是写那一刻的意图」的同一个机制</span>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">05</span>明确不采纳的</h2>
+  <p class="lede">读别人的东西，说不采纳比说采纳更需要理由。</p>
+  <table>
+    <thead><tr><th>他们的做法</th><th>为什么不采纳</th></tr></thead>
+    <tbody>
+      <tr><td>并行 ≤3（理由：人的 review 带宽）</td><td>那是<b>内容生产</b>场景的带宽约束。平台的并发由事件驱动，按事件到达走，不设人为上限</td></tr>
+      <tr><td>深度档 / Flash 档的模型分档</td><td>平台不替策略选模型 —— 用哪家是配置（<code>LLM_*</code> 环境变量），不是编排决策</td></tr>
+      <tr><td>「不做跨 Agent 记忆同步总线」</td><td>那是在<b>没有平台</b>的前提下做的减法。GM 的长期记忆正是要解决跨会话，只是放在<b>判断记录</b>这个可查证的地基上</td></tr>
+      <tr><td>编排模式映射表 / 单篇 DAG</td><td>他们是<b>编排器</b>（多代理怎么分工），我们是<b>闸门与账本</b>（干完之后谁判断、依据留不留）。平台不做编排</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="no">06</span>下一步</h2>
+  <div class="card">
+    <p style="margin:0 0 12px;font-size:14px;color:var(--ink-2)">
+      九轮到最后，边际收益明显下降了。剩下没读的主要是 40 个场景模板（测试金字塔、部署 SOP、工单回复这类
+      「照着做」的清单），而<b>我们的平台本身不做那些场景</b>。
+    </p>
+    <p style="margin:0;font-size:14px;color:var(--ink-2)">
+      更值的是回去把三条方案级的事谈掉：<b><code>hold_merge</code> 与级别 3 的动作</b>（连带「退出 / 幂等 / 回滚」三条件，
+      我们回滚那条是空的）、<b>「数据够了算够」的判据</b>（它卡着控制台「待评估」那一屏）、
+      以及<b>阶段二 / 三的排期</b>。
+    </p>
+  </div>
+</section>
+
+<div class="foot">
+  <p style="margin:0 0 8px"><b>源文档</b>（本页只做提炼与美化，正文以它们为准）</p>
+  <p style="margin:0 0 4px">· <a href="调研-行途开源矩阵-多代理与团队-2026-10-14.md">调研-行途开源矩阵-多代理与团队-2026-10-14.md</a> —— 九轮全文与逐轮依据</p>
+  <p style="margin:0 0 4px">· <a href="调研落地对照-2026-10-14.md">调研落地对照-2026-10-14.md</a> —— 48 条结论的落点回指</p>
+  <p style="margin:0 0 4px">· <a href="控制台设计-2026-10-13.md">控制台设计-2026-10-13.md</a> —— 判据落在了哪几节</p>
+  <p style="margin:12px 0 0;font-size:12px">
+    本页零依赖：图表用 CSS 画（不引任何 CDN）—— 引 CDN 的话，加载不到时
+    <b>页面看着完全正常、只是图是空的</b>，是最难发现的一类失败。
+  </p>
+</div>
+
+</div>
+</body>
+</html>
