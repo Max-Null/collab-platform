@@ -1,4 +1,5 @@
-import { resolve } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { CommentAction } from './action/commenter.js';
 import type { ActionRunner } from './action/commenter.js';
 import { GitLabCommentAction } from './action/gitlab-comment.js';
@@ -76,6 +77,17 @@ export function createLlm(): { client: LlmClient; configured: boolean } {
 }
 
 export function wire(opts: WiringOptions): Wiring {
+  // 库与输出的目录要先存在。
+  //
+  // SQLite **不会**替你建父目录，而干净检出里 `var/` 根本不存在（它被 .gitignore 忽略）——
+  // 于是第一次跑 `npm run demo` 崩在「unable to open database file」：那句话读起来
+  // 像库文件坏了，其实是目录不存在。动作落文件的目录同理。
+  //
+  // 修在装配层而不是 RecordStore 里：CLI 与 MCP 两个入口共用这一段（见文件抬头），
+  // 修在 store 里只覆盖其中一个入口，另一个照样崩。
+  if (opts.dbPath !== ':memory:') mkdirSync(dirname(opts.dbPath), { recursive: true });
+  mkdirSync(opts.outDir, { recursive: true });
+
   const pathConfig = loadSensitivePathConfig(
     resolve(opts.root, process.env.SENSITIVE_PATH_CONFIG ?? 'config/sensitive-paths.json'),
   );
