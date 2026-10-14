@@ -3,6 +3,7 @@ import { createInterface } from 'node:readline';
 import { resolve } from 'node:path';
 import type { JudgmentRecord } from '../types.js';
 import type { PipelineResult } from '../types.js';
+import { describeUsage, parseUsage } from '../usage.js';
 import { runPipeline } from '../pipeline.js';
 import { judgeHealth } from '../policy/health.js';
 import { wire } from '../wiring.js';
@@ -92,6 +93,10 @@ function renderPipelineResult(result: PipelineResult): string {
       v.outcome === 'hit' ? '命中' : v.outcome === 'miss' ? '未命中' : '判断没做成（不等于通过）';
     lines.push(`- ${v.policyId} @ ${v.policyVersion}：${tag}`);
     if (v.reason) lines.push(`  ${v.reason}`);
+
+    // 申报的人也该看得见这次判断花了多少 ——「成本可见」是这条改动的目的之一
+    const usageText = describeUsage(v.modelUsage);
+    if (usageText) lines.push(`  用量：${usageText}`);
   }
 
   if (result.actions.length > 0) {
@@ -240,6 +245,11 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<To
           ? evidence.map((e) => `- [${e.kind}] ${e.detail}${e.ref ? `（出处：${e.ref}）` : ''}`)
           : ['（无 —— 本次判定没有产生任何依据）']),
       ];
+
+      // 用量单独一段。它回答的是「这次判断花了多少、有没有思考」——
+      // 那是**随配置变**的事实，事后再去查环境变量读到的是"现在的配置"。
+      const usageText = describeUsage(parseUsage(row.usageJson));
+      if (usageText) lines.push('', `用量：${usageText}`);
 
       if (row.action) lines.push('', `动作：${row.action}（处置级别 ${row.actionLevel}）`);
       if (row.reaction) {

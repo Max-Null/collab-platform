@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import type { LlmClient } from '../llm/client.js';
-import type { ChangeEvent, Evidence, Policy, PolicyVerdict } from '../types.js';
+import type { ChangeEvent, Evidence, ModelUsage, Policy, PolicyVerdict } from '../types.js';
 
 /**
  * 判据配置（数据，不是代码）。
@@ -209,8 +209,13 @@ export function createClaimMismatchPolicy(config: ClaimMismatchConfig, llm: LlmC
       ].join('\n');
 
       let text: string;
+      // 用量跟着这次判定一起走。记录里得答得出「这次判断花了多少、有没有思考」，
+      // 而那两个答案是**随配置变**的 —— 事后再去查环境变量，读到的是"现在的配置"。
+      let usage: ModelUsage | undefined;
       try {
-        text = (await llm.complete({ system: SYSTEM, prompt, json: true })).text;
+        const response = await llm.complete({ system: SYSTEM, prompt, json: true });
+        text = response.text;
+        usage = response.usage;
       } catch (err) {
         return {
           ...base,
@@ -226,6 +231,8 @@ export function createClaimMismatchPolicy(config: ClaimMismatchConfig, llm: LlmC
           ...base,
           outcome: 'error',
           reason: '模型返回的不是约定的 JSON，本次没有做判断',
+          // 模型确实被调用了、也确实花了 token —— 所以用量要带上
+          modelUsage: usage,
           evidence: [
             { kind: 'model', detail: `${llm.name} / ${llm.model}`, ref: llm.model },
             { kind: 'model', detail: `原始返回：${text.slice(0, 300)}`, ref: 'raw_model_text' },
@@ -251,6 +258,7 @@ export function createClaimMismatchPolicy(config: ClaimMismatchConfig, llm: LlmC
         // 一条条件结论就变成了无条件结论，而人对着它只能答「对/不对」
         precondition: parsed.precondition,
         evidence,
+        modelUsage: usage,
       };
     },
   };

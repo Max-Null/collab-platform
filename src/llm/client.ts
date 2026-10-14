@@ -6,6 +6,8 @@
  * 判据的逻辑必须能在桩上跑完，否则每次改判据都要真花钱调模型。
  */
 
+import type { ModelUsage } from '../types.js';
+
 export interface LlmRequest {
   /** 系统提示词 —— 放判据里不变的那部分 */
   system: string;
@@ -19,6 +21,13 @@ export interface LlmResponse {
   text: string;
   /** 实际响应的模型名 —— 留痕要记清是哪家模型做的判断 */
   model: string;
+  /**
+   * 这次调用的用量（各家字段形状不一，见 types.ts 的 ModelUsage）。
+   *
+   * 客户端拿不到时就留空 —— 不编一个零出来。留空与「zero tokens」是两件事，
+   * 而那个区别正是这个平台反复在守的那条线。
+   */
+  usage?: ModelUsage;
 }
 
 export interface LlmClient {

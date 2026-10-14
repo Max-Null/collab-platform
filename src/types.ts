@@ -64,6 +64,35 @@ export interface Evidence {
  */
 export type VerdictOutcome = 'hit' | 'miss' | 'error';
 
+/**
+ * 一次模型调用的用量。
+ *
+ * **为什么它要进留痕**：判断记录原本只有模型名（`evidence` 里那条 `model`），
+ * 而它答不了两个问题 —— 这次判断花了多少、是在什么模式下判的。更要紧的是：
+ * 这两个答案**随配置变**。配置一改，历史记录就再也说不出自己是怎么产生的，
+ * 而那正是这个平台在防的那类回溯失效。
+ *
+ * 各家的字段形状不一样（OpenAI 兼容的是
+ * `completion_tokens_details.reasoning_tokens`，别家可能叫别的），所以这里只挑出
+ * 能通用的几个，**原始对象原样留在 `raw`** —— 不把厂商差异固化进 schema。
+ */
+export interface ModelUsage {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  /**
+   * 思维链 token 数。
+   *
+   * ⚠️ **它存在与否本身就是判据**，不必再去看别处：不思考的请求里这个字段根本
+   * 不会出现（实测 DeepSeek：思考关闭时连 `completion_tokens_details` 都没有）。
+   * 所以「记录里有没有它」= 「这次判断有没有思考」—— 那是**事实**，
+   * 而配置文件里写的是**声明**。
+   */
+  reasoningTokens?: number;
+  /** 厂商返回的原始 usage，原样留着 */
+  raw?: unknown;
+}
+
 /** 策略判定结果 */
 export interface PolicyVerdict {
   policyId: string;
@@ -89,6 +118,13 @@ export interface PolicyVerdict {
   precondition?: string;
   /** 支撑这条判定的依据 */
   evidence: Evidence[];
+  /**
+   * 这次判定调用模型产生的用量（纯规则策略没有）。
+   *
+   * 它**不放进 `evidence`**：依据回答的是「结论从哪儿来」，用量回答的是
+   * 「这次调用花了多少」。混在一起，「依据」这个列表就没法当依据读了。
+   */
+  modelUsage?: ModelUsage;
 }
 
 /** 处置级别：1 自主 · 2 留痕 · 3 待人确认 */
@@ -221,6 +257,13 @@ export interface JudgmentRecord {
   precondition?: string;
   /** 依据：evidence 的 JSON 序列化 */
   evidenceJson: string;
+  /**
+   * 模型用量（这次判定里的模型调用花了多少）的 JSON 序列化。
+   *
+   * 与 `evidenceJson` 同一种做法：各家 usage 的形状不一样，为每个字段开一列
+   * 等于把厂商差异固化进 schema。
+   */
+  usageJson?: string;
   /** 实际执行的动作与级别 */
   action?: string;
   actionLevel?: number;

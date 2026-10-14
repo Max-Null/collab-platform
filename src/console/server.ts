@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { judgeHealth } from '../policy/health.js';
+import { parseUsage } from '../usage.js';
 import { wire } from '../wiring.js';
 import type { Reaction } from '../types.js';
 
@@ -79,6 +80,9 @@ function shape(r: ReturnType<typeof w.store.listRecent>[number]) {
     reason: r.reason ?? null,
     precondition: r.precondition ?? null,
     evidence,
+    // 用量：这一条判定里模型调用花了多少（纯规则策略为 null）。
+    // 它随配置变，所以必须跟着记录走 —— 事后再去查环境变量，读到的是"现在的配置"。
+    usage: parseUsage(r.usageJson) ?? null,
     // id 一定有（这是从库里读出来的记录），但类型上 save() 的入参允许没有 id
     corroboration: r.id === undefined ? { checked: [], by: [] } : w.store.corroborationOf(r.id),
     action: r.action ?? null,

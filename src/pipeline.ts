@@ -119,6 +119,9 @@ export async function runPipeline(
       reason: verdict.reason,
       precondition: verdict.precondition,
       evidenceJson: JSON.stringify(verdict.evidence),
+      // 用量只在真的调过模型时才有（纯规则策略没有）—— 留空，不编一个零出来：
+      // 「没有这次调用」与「这次调用花了零」是两件事
+      usageJson: verdict.modelUsage ? JSON.stringify(verdict.modelUsage) : undefined,
       // 动作只记在发起它的那条策略上。一次事件只动了一次手，把它记进
       // 每一条命中记录里，会让「这条策略被处置过几次」凭空翻倍。
       action: ownsAction ? lead!.disposal.action : undefined,

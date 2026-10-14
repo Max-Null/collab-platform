@@ -59,6 +59,7 @@ export class RecordStore {
         reason         TEXT,
         precondition   TEXT,
         evidence_json  TEXT    NOT NULL,
+        usage_json     TEXT,
         action         TEXT,
         action_level   INTEGER,
         external_ref   TEXT,
@@ -104,6 +105,14 @@ export class RecordStore {
       this.db.exec('ALTER TABLE judgment ADD COLUMN precondition TEXT');
     }
 
+    // 模型用量。它回答的是「这次判断花了多少、在什么模式下判的」——
+    // 而那两个答案**随配置变**：事后再去查环境变量，读到的是"现在的配置"，
+    // 不是那一次生效的那份。存 JSON 而不是为每个字段开列：各家的 usage
+    // 形状不一样，开列等于把厂商差异固化进 schema。
+    if (!names.has('usage_json')) {
+      this.db.exec('ALTER TABLE judgment ADD COLUMN usage_json TEXT');
+    }
+
     // 更早的结构把结局存成 0/1 的 `hit` 列，表达不了第三态（判断没做成）。
     // 就地改名并换算，而不是重建表 —— 判断记录是审计数据，不该因为改结构被丢掉。
     if (names.has('hit') && !names.has('outcome')) {
@@ -118,9 +127,9 @@ export class RecordStore {
   save(r: JudgmentRecord): number {
     const stmt = this.db.prepare(`
       INSERT INTO judgment
-        (event_id, policy_id, policy_version, outcome, reason, precondition, evidence_json,
+        (event_id, policy_id, policy_version, outcome, reason, precondition, evidence_json, usage_json,
          action, action_level, external_ref, origin, created_at, reaction, reaction_note, reacted_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const info = stmt.run(
       r.eventId,
@@ -130,6 +139,7 @@ export class RecordStore {
       r.reason ?? null,
       r.precondition ?? null,
       r.evidenceJson,
+      r.usageJson ?? null,
       r.action ?? null,
       r.actionLevel ?? null,
       r.externalRef ?? null,
@@ -282,7 +292,7 @@ export class RecordStore {
   private query(where: string, params: Array<string | number | null>, limit: number): JudgmentRecord[] {
     const rows = this.db
       .prepare(
-        `SELECT id, event_id, policy_id, policy_version, outcome, reason, precondition, evidence_json,
+        `SELECT id, event_id, policy_id, policy_version, outcome, reason, precondition, evidence_json, usage_json,
                 action, action_level, external_ref, undone_at,
                 origin, created_at, reaction, reaction_note, reacted_at
          FROM judgment ${where} ORDER BY id DESC LIMIT ?`,
@@ -298,6 +308,10 @@ export class RecordStore {
       reason: row.reason === null ? undefined : String(row.reason),
       precondition: row.precondition === null ? undefined : String(row.precondition),
       evidenceJson: String(row.evidence_json),
+      usageJson:
+        row.usage_json === null || row.usage_json === undefined
+          ? undefined
+          : String(row.usage_json),
       action: row.action === null ? undefined : String(row.action),
       actionLevel: row.action_level === null ? undefined : Number(row.action_level),
       externalRef: row.external_ref === null ? undefined : String(row.external_ref),

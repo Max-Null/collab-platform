@@ -1,3 +1,4 @@
+import type { ModelUsage } from '../types.js';
 import type { LlmClient, LlmRequest, LlmResponse } from './client.js';
 
 export interface OpenAiCompatConfig {
@@ -24,6 +25,29 @@ export interface OpenAiCompatConfig {
    * 等于替使用方选定了厂商，与「调哪家是配置，不是代码」（见 client.ts）冲突。
    */
   extraBody?: Record<string, unknown>;
+}
+
+/**
+ * 把响应里的 usage 收成 ModelUsage。
+ *
+ * 只认 OpenAI 兼容的那一套字段名。**不去猜别家叫什么** —— 猜错的表现是
+ * 「字段在、但永远是空」，跟「这家确实不报用量」长得一模一样。
+ * 认不出来的部分原样留在 `raw` 里，将来要补也补得回来。
+ */
+function readUsage(raw: unknown): ModelUsage | undefined {
+  if (raw === null || typeof raw !== 'object') return undefined;
+
+  const u = raw as Record<string, unknown>;
+  const details = (u.completion_tokens_details ?? {}) as Record<string, unknown>;
+  const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
+
+  return {
+    promptTokens: num(u.prompt_tokens),
+    completionTokens: num(u.completion_tokens),
+    totalTokens: num(u.total_tokens),
+    reasoningTokens: num(details.reasoning_tokens),
+    raw,
+  };
 }
 
 /**
@@ -71,12 +95,13 @@ export class OpenAiCompatLlmClient implements LlmClient {
     const data = (await res.json()) as {
       choices?: { message?: { content?: string } }[];
       model?: string;
+      usage?: unknown;
     };
     const text = data.choices?.[0]?.message?.content;
 
     if (typeof text !== 'string') {
       throw new Error(`模型响应里没有 content：${JSON.stringify(data).slice(0, 500)}`);
     }
-    return { text, model: data.model ?? this.cfg.model };
+    return { text, model: data.model ?? this.cfg.model, usage: readUsage(data.usage) };
   }
 }

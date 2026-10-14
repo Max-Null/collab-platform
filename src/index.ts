@@ -7,6 +7,7 @@ import { GitLabApi, fetchOAuthToken } from './gitlab/api.js';
 import { runPipeline } from './pipeline.js';
 import { judgeHealth } from './policy/health.js';
 import type { PipelineResult } from './types.js';
+import { describeUsage } from './usage.js';
 import { wire } from './wiring.js';
 import type { GitLabWiring } from './wiring.js';
 
@@ -99,11 +100,19 @@ for (const event of events) {
   });
   results.push(result);
 
+  // 用量单独一行：它回答的是「这次判断花了多少、有没有思考」，
+  // 与结论是什么无关 —— 所以三种结局都要打
+  const logUsage = (v: (typeof result.verdicts)[number]): void => {
+    const usage = describeUsage(v.modelUsage);
+    if (usage) log(`    用量：${usage}`);
+  };
+
   for (const v of result.verdicts) {
     const head = `${v.policyId} @ ${v.policyVersion}`;
 
     if (v.outcome === 'miss') {
       log(`  · ${head} 未命中（看过，没问题）`);
+      logUsage(v);
       continue;
     }
 
@@ -111,6 +120,7 @@ for (const event of events) {
       log(`  ⚠ ${head} 判断没做成 —— 这不等于通过`);
       log(`    ${v.reason ?? ''}`);
       for (const e of v.evidence) log(`    · ${e.kind} ${e.detail}`);
+      logUsage(v);
       continue;
     }
 
@@ -119,6 +129,7 @@ for (const event of events) {
     for (const e of v.evidence) {
       log(`    · ${e.kind} ${e.detail}${e.ref ? `（出处：${e.ref}）` : ''}`);
     }
+    logUsage(v);
   }
 
   for (const a of result.actions) {
