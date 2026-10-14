@@ -200,7 +200,7 @@ MCP 出口与 CLI 走**同一套装配**（`src/wiring.ts`）。两边各装配�
 
 公开仓：<https://github.com/Max-Null/collab-platform> —— 本地分支 `public` 推到远端 `main`。
 
-**它只有一次提交，这是有意的。** 公开前的开发历史含真实的内网地址与人名；与其逐提交去改（**改漏一处就全暴露，而且你不会知道**），不如从一次干净的提交开始。本地 `master` 保留完整历史。
+**它的历史从一个孤儿提交开始，这是有意的。** 公开前的开发历史含真实的内网地址与人名；与其逐提交去改（**改漏一处就全暴露，而且你不会知道**），不如从一次干净的提交开始。本地 `master` 保留完整历史（62 个提交）。
 
 ### 更新流程
 
@@ -211,10 +211,13 @@ git grep -n -iE '<内网域名>|<内网 IP 段>|<代码托管平台的组名>|<�
 
 # ② 有命中就替换（对照表见 ef04fc6 那次提交）
 
-# ③ 压成一个提交，推到 public
-#    ⚠️ public 是孤儿分支，与 master **没有共同祖先**，必须带这个开关
+# ③ 让 public 的整棵树变成 master 的整棵树，压成一个提交推上去
+#    ⚠️ **不要用 git merge --squash** —— public 是孤儿分支、与 master
+#       没有共同祖先，合并必然冲突。真跑过一次，撞上了。
 git checkout public
-git merge --squash --allow-unrelated-histories master
+git rm -rq --cached .      # 清空 index，这样 master 里**删掉**的文件也会跟着消失
+git checkout master -- .   # 把 master 的整棵树取过来
+git add -A
 git commit -m "..."
 git push origin public:main
 git checkout master
