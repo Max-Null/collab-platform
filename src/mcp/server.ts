@@ -234,7 +234,11 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<To
         `结论：${row.reason ?? '（没有给出说明）'}`,
         '',
         '依据：',
-        ...evidence.map((e) => `- [${e.kind}] ${e.detail}${e.ref ? `（出处：${e.ref}）` : ''}`),
+        // 依据为空时要把这件事说出来，不能留一行「依据：」干在那儿 ——
+        // 空白读起来与「没有依据」不是一个意思，而这一行正是给人看的。
+        ...(evidence.length > 0
+          ? evidence.map((e) => `- [${e.kind}] ${e.detail}${e.ref ? `（出处：${e.ref}）` : ''}`)
+          : ['（无 —— 本次判定没有产生任何依据）']),
       ];
 
       if (row.action) lines.push('', `动作：${row.action}（处置级别 ${row.actionLevel}）`);
@@ -263,8 +267,14 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<To
               `判断没做成 ${s.error} · 采纳 ${s.adopted} · 明确否定 ${s.rejected} · 无视 ${s.ignored}`,
           );
 
-          // 「拦不住 / 没什么可拦 / 根本没开」三者必须分得开 —— 见 policy/health.ts
-          const h = judgeHealth({ enabled: p.enabled !== false, total: s.total, hit: s.hit });
+          // 「拦不住 / 没什么可拦 / 根本没开 / 从没真的判断过」四者必须分得开
+          // —— 见 policy/health.ts。所以 error 也要传进去，不能只给 total 与 hit。
+          const h = judgeHealth({
+            enabled: p.enabled !== false,
+            total: s.total,
+            hit: s.hit,
+            error: s.error,
+          });
           if (h.health !== 'ok') lines.push(`  ⚠ ${h.note}`);
         }
         lines.push('');

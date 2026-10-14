@@ -16,7 +16,7 @@
     "watch": "npm run build && node --experimental-sqlite --disable-warning=ExperimentalWarning dist/src/daemon.js",
     "undo": "npm run build && node --experimental-sqlite --disable-warning=ExperimentalWarning dist/src/undo.js",
     "guard": "node scripts/check-ssot.mjs && node scripts/check-skill-budget.mjs",
-    "test": "npm run build && node --experimental-sqlite --disable-warning=ExperimentalWarning --test && npm run guard"
+    "test": "npm run build && node --experimental-sqlite --disable-warning=ExperimentalWarning --test \"dist/test/*.test.js\" && npm run guard"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

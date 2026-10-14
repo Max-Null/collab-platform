@@ -79,9 +79,13 @@ export function createSensitivePathPolicy(config: SensitivePathConfig): Policy {
         policyId: this.id,
         policyVersion: this.version,
         outcome: hit ? 'hit' : 'miss',
+        // miss 也要给结论。少了这句，记录从 MCP / 控制台读回来就是
+        // 「（没有给出说明）」加一段空依据 —— 那与「平台没跑过」难以区分，
+        // 而 README 的约束是「每次判定都表态，包括什么都没发现的时候」。
+        // CLI 打印的「未命中（看过，没问题）」属于显示层，不该是唯一的出处。
         reason: hit
           ? `本次变更的 ${event.changedFiles.length} 个文件中有 ${evidence.length} 个触及敏感路径`
-          : undefined,
+          : `本次变更的 ${event.changedFiles.length} 个文件都没有触及敏感路径`,
         evidence,
       };
     },

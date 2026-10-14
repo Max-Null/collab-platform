@@ -118,7 +118,12 @@ function handle(req: IncomingMessage, res: ServerResponse, url: URL): void {
         const p = w.policies.find((x) => x.id === s.policyId);
         return {
           ...s,
-          health: judgeHealth({ enabled: p?.enabled !== false, total: s.total, hit: s.hit }),
+          health: judgeHealth({
+            enabled: p?.enabled !== false,
+            total: s.total,
+            hit: s.hit,
+            error: s.error,
+          }),
         };
       }),
       /** 运行图要的四段数字。四段的数目要能对得上账，否则人看图会以为是自己看错了。 */

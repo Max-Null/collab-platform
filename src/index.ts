@@ -148,8 +148,14 @@ if (values.stats) {
           `采纳 ${s.adopted} · 明确否定 ${s.rejected} · 无视 ${s.ignored}`,
       );
 
-      // 「拦不住 / 没什么可拦 / 根本没开」三者必须分得开 —— 见 policy/health.ts
-      const h = judgeHealth({ enabled: p.enabled !== false, total: s.total, hit: s.hit });
+      // 「拦不住 / 没什么可拦 / 根本没开 / 从没真的判断过」四者必须分得开
+      // —— 见 policy/health.ts。所以 error 也要传进去，不能只给 total 与 hit。
+      const h = judgeHealth({
+        enabled: p.enabled !== false,
+        total: s.total,
+        hit: s.hit,
+        error: s.error,
+      });
       if (h.health !== 'ok') log(`    ⚠ ${h.note}`);
     }
   }
