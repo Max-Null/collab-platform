@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { GitLabPollSource } from './event/gitlab.js';
+import { GitLabPushSource } from './event/gitlab-push.js';
 import { MockEventSource } from './event/mock.js';
 import type { EventSource } from './event/source.js';
 import { GitLabApi, fetchOAuthToken } from './gitlab/api.js';
@@ -42,7 +43,7 @@ let source: EventSource;
 let gitlab: GitLabWiring | undefined;
 let sourceNote: string;
 
-if (values.source === 'gitlab') {
+if (values.source === 'gitlab' || values.source === 'gitlab-push') {
   const baseUrl = need('GITLAB_BASE_URL');
   const project = need('GITLAB_PROJECT');
   const write = process.env.GITLAB_WRITE === 'true';
@@ -54,23 +55,41 @@ if (values.source === 'gitlab') {
   if (pat) {
     api = new GitLabApi({ baseUrl, token: pat });
   } else {
-    const token = await fetchOAuthToken({
+    const username = need('GITLAB_USER');
+    const password = need('GITLAB_PASSWORD');
+    const token = await fetchOAuthToken({ baseUrl, username, password });
+    api = new GitLabApi({
       baseUrl,
-      username: need('GITLAB_USER'),
-      password: need('GITLAB_PASSWORD'),
+      token,
+      tokenKind: 'bearer',
+      // 常驻要跑几天，而这条令牌两小时就过期 —— 让它自己在 401 时换一个（见 api.ts 的 req）
+      refresh: () => fetchOAuthToken({ baseUrl, username, password }),
     });
-    api = new GitLabApi({ baseUrl, token, tokenKind: 'bearer' });
   }
 
   const state = process.env.GITLAB_MR_STATE ?? 'opened';
-  source = new GitLabPollSource(api, project, {
-    limit: Number(process.env.GITLAB_MR_LIMIT ?? 20),
-    state,
-  });
   gitlab = { api, project, write };
-  sourceNote =
-    `gitlab · ${project} · state=${state} · ` +
-    `${write ? '写开关【开】' : '写开关【关】（dry-run）'}`;
+
+  if (values.source === 'gitlab-push') {
+    // 推送链路。团队不用 MR 时，只订阅 MR 的平台会「每轮成功、每轮 0 个事件」——
+    // 那与「真的没有变更」长得一模一样，而它其实什么都没看到。
+    const branch = process.env.GITLAB_BRANCH;
+    source = new GitLabPushSource(api, project, {
+      branch,
+      limit: Number(process.env.GITLAB_COMMIT_LIMIT ?? 20),
+    });
+    sourceNote =
+      `gitlab-push · ${project} · 分支 ${branch ?? '（默认分支）'} · ` +
+      `${write ? '写开关【开】' : '写开关【关】（dry-run）'}`;
+  } else {
+    source = new GitLabPollSource(api, project, {
+      limit: Number(process.env.GITLAB_MR_LIMIT ?? 20),
+      state,
+    });
+    sourceNote =
+      `gitlab · ${project} · state=${state} · ` +
+      `${write ? '写开关【开】' : '写开关【关】（dry-run）'}`;
+  }
 } else {
   source = new MockEventSource(eventsDir);
   sourceNote = `mock · ${eventsDir}`;

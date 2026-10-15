@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import type {
+  Heartbeat,
   JudgmentOrigin,
   JudgmentRecord,
   PolicyVersionStats,
@@ -72,6 +73,22 @@ export class RecordStore {
       );
       CREATE INDEX IF NOT EXISTS idx_judgment_policy ON judgment(policy_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_judgment_event  ON judgment(event_id);
+
+      -- 常驻进程的心跳。**它刻意不进 judgment 表**：心跳不是一次判断，
+      -- 也不该进观察期的任何分母 —— 混进去，分母会凭空变大，
+      -- 而「分母变大」看起来只是数据更多了，没人会去查。
+      CREATE TABLE IF NOT EXISTS heartbeat (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        at          TEXT    NOT NULL,
+        ok          INTEGER NOT NULL,
+        interval_ms INTEGER NOT NULL,
+        events      INTEGER NOT NULL,
+        judged      INTEGER NOT NULL,
+        skipped     INTEGER NOT NULL,
+        duration_ms INTEGER NOT NULL,
+        error       TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_heartbeat_at ON heartbeat(at);
     `);
 
     const columns = this.db.prepare('PRAGMA table_info(judgment)').all() as Array<{ name: string }>;
@@ -120,6 +137,16 @@ export class RecordStore {
         ALTER TABLE judgment RENAME COLUMN hit TO outcome;
         UPDATE judgment SET outcome = CASE WHEN outcome = '1' THEN 'hit' ELSE 'miss' END;
       `);
+    }
+
+    // 心跳里也记模型。控制台是**另一个进程**，它自己的环境里往往没有模型配置 ——
+    // 界面若拿自己的配置去说「平台没配模型」，报的是一个不存在的问题。
+    // 见 types.ts 的 Heartbeat.model。
+    const hbCols = this.db.prepare('PRAGMA table_info(heartbeat)').all() as Array<{ name: string }>;
+    const hbNames = new Set(hbCols.map((c) => c.name));
+    if (!hbNames.has('model')) {
+      this.db.exec('ALTER TABLE heartbeat ADD COLUMN model TEXT');
+      this.db.exec('ALTER TABLE heartbeat ADD COLUMN model_configured INTEGER');
     }
   }
 
@@ -269,6 +296,30 @@ export class RecordStore {
       )
       .all(...(policyId ? [policyId] : [])) as Array<Record<string, string | number | null>>;
 
+    // 逐条序列：观察表在样本不足时画点图用它。
+    //
+    // 一次查全再分组，不按每个版本单查 —— 后者是 N+1 次查询，而这张表的行数是
+    // 「策略 × 版本」：现在很小，以后不会小。
+    const seqRows = this.db
+      .prepare(
+        `SELECT policy_id, policy_version, outcome, reaction IS NOT NULL AS reviewed
+         FROM judgment WHERE origin = 'effective' ORDER BY id ASC`,
+      )
+      .all() as Array<{
+      policy_id: string;
+      policy_version: string;
+      outcome: string;
+      reviewed: number;
+    }>;
+
+    const seq = new Map<string, { outcome: VerdictOutcome; reviewed: boolean }[]>();
+    for (const r of seqRows) {
+      const key = `${r.policy_id}\u0000${r.policy_version}`;
+      const arr = seq.get(key) ?? [];
+      arr.push({ outcome: r.outcome as VerdictOutcome, reviewed: Number(r.reviewed) === 1 });
+      seq.set(key, arr);
+    }
+
     return rows.map((row) => ({
       policyId: String(row.policy_id),
       policyVersion: String(row.policy_version),
@@ -280,6 +331,7 @@ export class RecordStore {
       adopted: Number(row.adopted),
       rejected: Number(row.rejected),
       ignored: Number(row.ignored),
+      sequence: seq.get(`${row.policy_id}\u0000${row.policy_version}`) ?? [],
     }));
   }
 
@@ -425,6 +477,115 @@ export class RecordStore {
       reacted: row.reacted ?? 0,
       pending,
     };
+  }
+
+  /**
+   * 落一次心跳。
+   *
+   * **每一轮都写**，哪怕什么都没拉到、哪怕是失败的 —— 心跳的意义就在于
+   * 「它的缺席」本身是个信号。只写成功的那几轮，等于把「失败」与「没跑」
+   * 合并成同一种表现，而这两件事该做的事完全不同。
+   */
+  saveHeartbeat(h: Heartbeat): number {
+    const info = this.db
+      .prepare(
+        `INSERT INTO heartbeat (at, ok, interval_ms, events, judged, skipped, duration_ms, error, model, model_configured)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        h.at,
+        h.ok ? 1 : 0,
+        h.intervalMs,
+        h.events,
+        h.judged,
+        h.skipped,
+        h.durationMs,
+        h.error ?? null,
+        h.model ?? null,
+        h.modelConfigured === undefined ? null : h.modelConfigured ? 1 : 0,
+      );
+    return Number(info.lastInsertRowid);
+  }
+
+  /** 一行心跳记录 → Heartbeat。两处要读它，所以映射只有一份。 */
+  private mapHeartbeat(row: Record<string, unknown>): Heartbeat {
+    return {
+      at: String(row.at),
+      ok: Number(row.ok) === 1,
+      intervalMs: Number(row.interval_ms),
+      events: Number(row.events),
+      judged: Number(row.judged),
+      skipped: Number(row.skipped),
+      durationMs: Number(row.duration_ms),
+      error: row.error === null || row.error === undefined ? undefined : String(row.error),
+      // 「没有模型信息」（老心跳）与「模型没配上」是两件事 —— 所以这里不补默认值
+      model: row.model === null || row.model === undefined ? undefined : String(row.model),
+      modelConfigured:
+        row.model_configured === null || row.model_configured === undefined
+          ? undefined
+          : Number(row.model_configured) === 1,
+    };
+  }
+
+  /** 最后一次心跳。从来没有过就返回 undefined —— 那是「从没跑过」，不是「刚跑过」。 */
+  lastHeartbeat(): Heartbeat | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT at, ok, interval_ms, events, judged, skipped, duration_ms, error, model, model_configured
+         FROM heartbeat ORDER BY id DESC LIMIT 1`,
+      )
+      .get() as Record<string, unknown> | undefined;
+
+    return row ? this.mapHeartbeat(row) : undefined;
+  }
+
+  /**
+   * 最近 N 次心跳，**按时间正序**返回（最早的在最前）—— 控制台的心跳格带用它。
+   *
+   * 格带刻意**逐轮画、不合并相邻的相同状态**。这一点与 Grafana 的 status history
+   * 一致，也是它与 state timeline 的关键区别：本平台的口径就是「每一轮都落一条」，
+   * 合并之后「连续 20 轮正常」与「只正常过一轮」会画成同一个样子 ——
+   * 而「稳不稳」恰恰是格带要回答的问题。
+   */
+  recentHeartbeats(limit = 48): Heartbeat[] {
+    const rows = this.db
+      .prepare(
+        `SELECT at, ok, interval_ms, events, judged, skipped, duration_ms, error, model, model_configured
+         FROM heartbeat ORDER BY id DESC LIMIT ?`,
+      )
+      .all(limit) as Array<Record<string, unknown>>;
+
+    // 查出来是倒序（最近的在前），翻成正序：格带从左到右是时间在推进
+    return rows.reverse().map((r) => this.mapHeartbeat(r));
+  }
+
+  /**
+   * 最后一条判断记录的时刻。
+   *
+   * 与心跳**成对**才有意义：有心跳、没有新记录 = 「在跑，但最近没有可判的东西」；
+   * 两个都旧 = 它停了。单看任何一个都答不出这个问题 —— 而这两个结论的处置
+   * 一个是什么都不用做，另一个是去把进程拉起来。
+   *
+   * 只看 `effective`：影子判定没有进过人的视野，不能拿它当「平台动过」的证据。
+   */
+  lastJudgmentAt(): string | undefined {
+    const row = this.db
+      .prepare("SELECT MAX(created_at) AS m FROM judgment WHERE origin = 'effective'")
+      .get() as { m: string | null } | undefined;
+    return row?.m ? String(row.m) : undefined;
+  }
+
+  /**
+   * 某个时刻之后新落的判定条数 —— 简报里的「过去 24 小时」用它。
+   *
+   * 同样只看 `effective`：影子判定没进过人的视野，拿它当「平台动过」的证据
+   * 会把活动量凭空放大，而放大的部分恰恰是没人看过的那部分。
+   */
+  countSince(at: string): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS n FROM judgment WHERE origin = 'effective' AND created_at >= ?")
+      .get(at) as { n: number };
+    return Number(row.n);
   }
 
   close(): void {

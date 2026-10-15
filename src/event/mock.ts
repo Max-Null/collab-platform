@@ -25,6 +25,11 @@ export class MockEventSource implements EventSource {
       if (!parsed.id || !Array.isArray(parsed.changedFiles)) {
         throw new Error(`样例事件格式不对：${file}`);
       }
+      // `kind` 也要校验。不替它补一个默认值：**「不写就是 MR」是隐式约定**，
+      // 而隐式约定在加第三种事件形态时开始出错，且错得安静 —— 见 types.ts 的 ChangeEvent。
+      if (parsed.kind !== 'mr' && parsed.kind !== 'push') {
+        throw new Error(`样例事件缺 kind（只能是 'mr' 或 'push'）：${file}`);
+      }
       return parsed;
     });
   }

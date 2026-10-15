@@ -48,12 +48,28 @@ export class GitLabCommentAction implements ActionRunner {
       };
     }
 
+    // 推送事件没有可评论的落点 —— GitLab 的评论接口挂在 MR 上。
+    //
+    // **明确拒绝，不硬造一个落点。** 发到 commit 评论上看起来「也通知到了」，
+    // 但那是另一种东西：没人会去 commit 页面找审查意见，于是它等于没发，
+    // 而记录里却写着「已评论」——又一处看起来成功、实际没发生的动作。
+    const mrIid = ctx.event.mrIid;
+    if (mrIid === undefined) {
+      return {
+        action: 'comment',
+        ok: false,
+        error:
+          `事件 ${ctx.event.id} 没有 MR 编号（${ctx.event.kind} 形态）—— 没有可评论的地方。` +
+          `正文已落到 ${file}，这条记录如实标为「动作没做成」`,
+      };
+    }
+
     try {
-      const note = await this.cfg.api.createNote(this.cfg.project, ctx.event.mrIid, body);
+      const note = await this.cfg.api.createNote(this.cfg.project, mrIid, body);
       return {
         action: 'comment',
         ok: true,
-        output: `已评论 MR !${ctx.event.mrIid}（note ${note.id}）\n\n${body}`,
+        output: `已评论 MR !${mrIid}（note ${note.id}）\n\n${body}`,
         // 记下这条评论的 id —— 它是回滚唯一的线索（见 types.ts 的 externalRef）
         externalRef: String(note.id),
       };

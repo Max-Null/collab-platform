@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { judgeDaemon, toBeatSlots } from '../heartbeat.js';
 import { judgeHealth } from '../policy/health.js';
 import { parseUsage } from '../usage.js';
 import { wire } from '../wiring.js';
@@ -108,6 +109,8 @@ function handle(req: IncomingMessage, res: ServerResponse, url: URL): void {
     const stats = w.store.statsByPolicyVersion();
     const pending = w.store.listPendingReactions(200);
     const errors = w.store.listUnresolvedErrors(200);
+    const lastBeat = w.store.lastHeartbeat();
+    const lastJudgmentAt = w.store.lastJudgmentAt();
 
     return json(res, {
       policies: w.policies.map((p) => ({
@@ -137,6 +140,26 @@ function handle(req: IncomingMessage, res: ServerResponse, url: URL): void {
       errorPendingCount: errors.length,
       model: { name: w.llm.name, model: w.llm.model, configured: w.llmConfigured },
       dbPath,
+      /**
+       * 平台**现在**的状态 —— 与上面每一个数都不同性质。
+       *
+       * 上面那些回答的是「它做过什么」，而累计数字永远看起来像「一直都在
+       * 正常工作」：一个停了 21 小时的平台，它的累计统计与一个正在跑的
+       * 一模一样。这一项回答的是「它还在不在」，判据在 heartbeat.ts。
+       */
+      daemon: {
+        ...judgeDaemon({ last: lastBeat, lastJudgmentAt }),
+        last: lastBeat ?? null,
+        lastJudgmentAt: lastJudgmentAt ?? null,
+        /**
+         * 最近的心跳，按时间正序 —— 状态卡上那排格带用它。
+         *
+         * 与 `last` 是两种东西：`last` 回答「此刻还在不在」，格带回答
+         * 「**最近稳不稳**」—— 「每隔几轮就迟一次」与「一直很稳」在后者的眼里
+         * 完全不同，而在只有一个圆点的界面里长得一模一样。
+         */
+        beats: toBeatSlots(w.store.recentHeartbeats(200), { now: new Date(), slots: 48 }),
+      },
     });
   }
 

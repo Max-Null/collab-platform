@@ -1,6 +1,7 @@
 {
   "id": "mock-mr-001",
   "source": "mock",
+  "kind": "mr",
   "project": "my-group/my-app",
   "mrIid": 101,
   "title": "对账中心：调整发票状态字段",

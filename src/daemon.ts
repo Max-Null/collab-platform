@@ -1,9 +1,11 @@
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { GitLabPollSource } from './event/gitlab.js';
+import { GitLabPushSource } from './event/gitlab-push.js';
 import type { EventSource } from './event/source.js';
 import { GitLabApi, fetchOAuthToken } from './gitlab/api.js';
 import { runPipeline } from './pipeline.js';
+import type { Heartbeat } from './types.js';
 import { wire } from './wiring.js';
 
 /**
@@ -37,6 +39,20 @@ const { values } = parseArgs({
     out: { type: 'string', default: 'var/comments' },
     limit: { type: 'string', default: '20' },
     state: { type: 'string', default: 'opened' },
+    /**
+     * 订阅哪种事件，逗号分隔：`mr`（合并请求）/ `push`（分支提交）。
+     *
+     * **默认 push**，理由不是「push 更好」，而是**它对应这个团队的实际形态**：
+     * 三个仓库合计 3 条 MR 而提交是活跃的，工作方式是「功能分支直接推 test」。
+     * 只订阅 MR 的平台上，每轮都成功、每轮都是 0 个事件 —— 而它自己看不出
+     * 这与「真的没有变更」的区别。
+     *
+     * ⚠️ 两个都订阅时，MR 合并后的那些提交会**各自再报一次**（同一个变更判两遍），
+     * 而观察期的分母最怕重复计数。团队开始走 MR 之后应当只留 `mr`。
+     */
+    source: { type: 'string', default: 'push' },
+    /** push 源订阅哪个分支；不填则用仓库的默认分支 */
+    branch: { type: 'string' },
     once: { type: 'boolean', default: false },
   },
   allowPositionals: false,
@@ -67,18 +83,39 @@ async function main(): Promise<void> {
   if (pat) {
     api = new GitLabApi({ baseUrl, token: pat });
   } else {
-    const token = await fetchOAuthToken({
+    const username = need('GITLAB_USER');
+    const password = need('GITLAB_PASSWORD');
+    const token = await fetchOAuthToken({ baseUrl, username, password });
+    api = new GitLabApi({
       baseUrl,
-      username: need('GITLAB_USER'),
-      password: need('GITLAB_PASSWORD'),
+      token,
+      tokenKind: 'bearer',
+      // 常驻要跑几天，而这条令牌两小时就过期 —— 让它自己在 401 时换一个（见 api.ts 的 req）
+      refresh: () => fetchOAuthToken({ baseUrl, username, password }),
     });
-    api = new GitLabApi({ baseUrl, token, tokenKind: 'bearer' });
   }
 
-  const source: EventSource = new GitLabPollSource(api, project, {
-    limit: Number(values.limit),
-    state: values.state,
-  });
+  const wanted = (values.source ?? 'push')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const sources: EventSource[] = [];
+  if (wanted.includes('mr')) {
+    sources.push(
+      new GitLabPollSource(api, project, { limit: Number(values.limit), state: values.state }),
+    );
+  }
+  if (wanted.includes('push')) {
+    sources.push(
+      new GitLabPushSource(api, project, { branch: values.branch, limit: Number(values.limit) }),
+    );
+  }
+  if (sources.length === 0) {
+    // 装配期就报错，不留到运行时空转 —— 一个「什么都没订阅」的常驻进程会
+    // 每轮成功、每轮 0 事件，与「真的没有变更」长得一模一样。
+    throw new Error(`--source 里没有认识的事件源：${values.source}（只能是 mr / push，逗号分隔）`);
+  }
 
   // 装配与 CLI、MCP 出口共用一条路径 —— 三个入口给出不同结论才是真问题
   const w = wire({ root, dbPath, outDir, gitlab: { api, project, write } });
@@ -88,7 +125,8 @@ async function main(): Promise<void> {
   let stopped = false;
 
   log(
-    `[协作平台 · 常驻] ${project} · state=${values.state} · 每 ${intervalMs / 1000}s 一轮 · ` +
+    `[协作平台 · 常驻] ${project} · 订阅 ${sources.map((s) => s.name).join(' + ')}` +
+      `${values.branch ? ` @ ${values.branch}` : ''} · 每 ${intervalMs / 1000}s 一轮 · ` +
       `${write ? '写开关【开】' : '写开关【关】（干燥跑，不发任何东西到 GitLab）'}`,
   );
   log(
@@ -101,8 +139,35 @@ async function main(): Promise<void> {
     rounds += 1;
     const started = Date.now();
 
+    /**
+     * 每轮都落一条心跳 —— 成功了记成绩，失败了记原因。
+     *
+     * 这是「看得见」那一层的入口：日志只活在终端里，终端一关就没了；
+     * 心跳落在库里，控制台因此回答得出「它现在还在不在跑」。
+     */
+    const beat = (
+      h: Omit<Heartbeat, 'at' | 'intervalMs' | 'durationMs' | 'model' | 'modelConfigured'>,
+    ): void => {
+      w.store.saveHeartbeat({
+        at: new Date().toISOString(),
+        intervalMs,
+        durationMs: Date.now() - started,
+        // 模型信息跟着心跳走：控制台是**另一个进程**，它自己的环境里往往没有
+        // 模型配置 —— 界面拿自己的配置去说「平台没配模型」是在报一个不存在的问题。
+        model: w.llmConfigured ? w.llm.model : w.llm.name,
+        modelConfigured: w.llmConfigured,
+        ...h,
+      });
+    };
+
     try {
-      const events = await source.fetch();
+      // 多个源各自拉，合成一批。
+      //
+      // 一个源失败就让整轮失败（下一轮继续）—— 第一版不做「部分成功」：
+      // 「push 源看到了、MR 源没看到」这件事要能落进记录才值得做，
+      // 而那需要新字段，否则它就是一个只在日志里存在、事后查不到的中间状态。
+      const batches = await Promise.all(sources.map((s) => s.fetch()));
+      const events = batches.flat();
 
       let judged = 0;
       let skipped = 0;
@@ -133,9 +198,13 @@ async function main(): Promise<void> {
       log(
         `第 ${rounds} 轮：拉到 ${events.length} 个事件 · 新判 ${judged} · 跳过 ${skipped}（已判过）· ${ms}ms`,
       );
+      beat({ ok: true, events: events.length, judged, skipped });
     } catch (e) {
       // 一轮失败不让进程死。见文件头 ①。
-      log(`第 ${rounds} 轮失败（下一轮继续）：${e instanceof Error ? e.message : String(e)}`);
+      const msg = e instanceof Error ? e.message : String(e);
+      log(`第 ${rounds} 轮失败（下一轮继续）：${msg}`);
+      // 失败也落心跳：不落的话，「这一轮挂了」与「这一轮没有新事件」在库里长得一样
+      beat({ ok: false, events: 0, judged: 0, skipped: 0, error: msg });
     }
   };
 
@@ -145,8 +214,23 @@ async function main(): Promise<void> {
     return;
   }
 
+  // 上一轮还没跑完，就不要再开一轮。
+  //
+  // 没有这道闸时，一轮的耗时一旦超过间隔就会**并发**跑起来 —— 而模型慢一次就够了
+  // （这台机器上 qwen3.6-plus 思考模式判一条 ~18s，几个事件就能超过 300s 的间隔）。
+  // 并发轮次会互相拉长彼此，几轮之后变成雪崩，而**从外面看只是「越来越慢」**：
+  // 心跳照常在写、日志照常在打，没有一行报错。
+  let running = false;
   const timer = setInterval(() => {
-    if (!stopped) void tick();
+    if (stopped) return;
+    if (running) {
+      log(`上一轮还在跑（超过 ${intervalMs / 1000}s），这一轮跳过 —— 免得轮次叠起来互相拖慢`);
+      return;
+    }
+    running = true;
+    void tick().finally(() => {
+      running = false;
+    });
   }, intervalMs);
 
   const shutdown = (sig: string): void => {

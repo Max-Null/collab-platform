@@ -22,6 +22,14 @@ export interface GitLabConfig {
    */
   tokenKind?: 'private-token' | 'bearer';
   timeoutMs?: number;
+  /**
+   * 换一个新令牌。给了它，请求遇到 401 时会自动换一次并原样重发。
+   *
+   * **为什么是「遇到 401 才换」而不是定时刷新**：OAuth 令牌两小时过期是必然会
+   * 发生的事，而定时刷新要维护「什么时候到期」这份状态 —— 多一份状态就多一处
+   * 会不同步的地方。401 是 GitLab 亲口说的「你的令牌不认了」，拿它当触发器不用猜。
+   */
+  refresh?: () => Promise<string>;
 }
 
 /**
@@ -77,15 +85,39 @@ export interface GitLabChange {
   renamed_file?: boolean;
 }
 
+/**
+ * 一个提交。
+ *
+ * 只看平台用得上的几个字段：`title`（第一行）与 `message`（全文）构成**主张** ——
+ * 「改动与声称是否相符」那条策略检验的就是它，只不过对 MR 时主张来自人工写的描述，
+ * 对提交时来自提交消息。这也是接入记录里那句「push 没有可检验的主张」需要修正的地方：
+ * 提交消息就是主张，只是它比 MR 描述短、也更少被认真写。
+ */
+export interface GitLabCommit {
+  id: string;
+  short_id: string;
+  title: string;
+  message: string;
+  author_name: string;
+  committed_date: string;
+  /**
+   * 父提交。**两个以上说明这是一次合并提交** —— 事件源靠它跳过合并:
+   * 合并提交的 diff 是「被合进来的那些改动的合集」，而那些提交各自也已经报过一次，
+   * 不跳过就会把同一处变更判两遍 —— 观察期的分母最怕的正是重复计数。
+   */
+  parent_ids?: string[];
+}
+
 export class GitLabApi {
   readonly name = 'gitlab-api';
 
   constructor(private readonly cfg: GitLabConfig) {}
 
-  private async req<T>(path: string, init?: RequestInit): Promise<T> {
+  /** 发一次请求，带上当前令牌。抽出来是为了 401 之后能原样再发一次。 */
+  private send(path: string, init?: RequestInit): Promise<Response> {
     const url = `${this.cfg.baseUrl.replace(/\/+$/, '')}/api/v4${path}`;
 
-    const res = await fetch(url, {
+    return fetch(url, {
       ...init,
       headers: {
         'content-type': 'application/json',
@@ -96,6 +128,24 @@ export class GitLabApi {
       },
       signal: AbortSignal.timeout(this.cfg.timeoutMs ?? 30_000),
     });
+  }
+
+  private async req<T>(path: string, init?: RequestInit): Promise<T> {
+    let res = await this.send(path, init);
+
+    // 401 且能换令牌 → 换一个再原样发一次。
+    //
+    // 常驻进程里的令牌过期不是异常，是**必然会发生的日常**：用户名密码换来的
+    // OAuth 令牌两小时就过期。不处理它的后果很具体 —— 跑满两小时后每一轮都失败，
+    // 而「每轮都失败」在心跳里是看得见的（ok=false + 原因），但「看得见」不等于
+    // 「不用管」：一个每天要人重启一次的平台，等于又回到了要人手动触发的老路。
+    //
+    // **只重试一次**：再失败就是真没权限或密码错了，那时该如实报错，而不是循环重试 ——
+    // 循环重试会把一个明确的错误变成一段看不出因果的日志。
+    if (res.status === 401 && this.cfg.refresh) {
+      this.cfg.token = await this.cfg.refresh();
+      res = await this.send(path, init);
+    }
 
     if (!res.ok) {
       const body = await res.text().catch(() => '');
@@ -131,6 +181,25 @@ export class GitLabApi {
   }
 
   /**
+   * 把 GitLab 的改动数组收成「文件列表 + diff 文本」。
+   *
+   * MR 的 `/changes` 与提交的 `/commits/:sha/diff` 返回的是**同一种结构**，
+   * 所以解析只该有一份。两份写的后果不是语法错，而是它们会慢慢分叉 ——
+   * 分叉点在「重命名怎么记」这种细节上，而没有人会去核对两处是否还一致。
+   */
+  private shapeChanges(changes: GitLabChange[]): { changedFiles: string[]; diff: string } {
+    return {
+      // 重命名时两个路径都留 —— 只记 new_path 会看不出「这个文件原来叫什么」
+      changedFiles: changes.map((c) =>
+        c.renamed_file ? `${c.old_path} → ${c.new_path}` : c.new_path,
+      ),
+      diff: changes
+        .map((c) => `diff --git a/${c.old_path} b/${c.new_path}\n${c.diff}`)
+        .join('\n'),
+    };
+  }
+
+  /**
    * 取一次 MR 的改动：文件列表 + 拼回完整 diff 的文本。
    *
    * **这两个值正是策略 gather 白名单里的 `changed_files` 与 `diff`。**
@@ -144,17 +213,35 @@ export class GitLabApi {
     const data = await this.req<{ changes?: GitLabChange[] }>(
       `/projects/${GitLabApi.seg(project)}/merge_requests/${mrIid}/changes`,
     );
-    const changes = data.changes ?? [];
+    return this.shapeChanges(data.changes ?? []);
+  }
 
-    return {
-      // 重命名时两个路径都留 —— 只记 new_path 会看不出「这个文件原来叫什么」
-      changedFiles: changes.map((c) =>
-        c.renamed_file ? `${c.old_path} → ${c.new_path}` : c.new_path,
-      ),
-      diff: changes
-        .map((c) => `diff --git a/${c.old_path} b/${c.new_path}\n${c.diff}`)
-        .join('\n'),
-    };
+  /**
+   * 分支上的提交列表 —— 推送事件源的第一跳。
+   *
+   * 轮询能看到的不是「一次推送」这个动作，而是「分支现在在哪」。所以单元取**提交**：
+   * 事件 id 里带 sha，「这个提交被审过没有」才有答案，而不是「这个分支被审过没有」。
+   */
+  listCommits(
+    project: string,
+    opts: { refName?: string; limit?: number } = {},
+  ): Promise<GitLabCommit[]> {
+    const limit = opts.limit ?? 20;
+    const ref = opts.refName ? `&ref_name=${encodeURIComponent(opts.refName)}` : '';
+    return this.req<GitLabCommit[]>(
+      `/projects/${GitLabApi.seg(project)}/repository/commits?per_page=${limit}${ref}`,
+    );
+  }
+
+  /** 一个提交的改动 —— 与 MR 的 `/changes` 同构，因此共用同一份解析 */
+  async fetchCommitChanges(
+    project: string,
+    sha: string,
+  ): Promise<{ changedFiles: string[]; diff: string }> {
+    const changes = await this.req<GitLabChange[]>(
+      `/projects/${GitLabApi.seg(project)}/repository/commits/${sha}/diff`,
+    );
+    return this.shapeChanges(changes);
   }
 
   /** 在 MR 下发一条评论 —— **写操作**，只在显式打开写开关时才会被调用 */

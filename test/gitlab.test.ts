@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { GitLabCommentAction } from '../src/action/gitlab-comment.js';
 import { GitLabPollSource } from '../src/event/gitlab.js';
+import { GitLabPushSource } from '../src/event/gitlab-push.js';
 import { GitLabApi } from '../src/gitlab/api.js';
 import { runPipeline } from '../src/pipeline.js';
 import {
@@ -239,6 +240,7 @@ test('写失败要如实报错，不能当成发成功了', async () => {
         event: {
           id: 'x',
           source: 'gitlab',
+          kind: 'mr',
           project: 'p',
           mrIid: 7,
           title: 't',
@@ -264,4 +266,191 @@ test('写失败要如实报错，不能当成发成功了', async () => {
 
   assert.equal(result.ok, false);
   assert.ok(result.error?.includes('403'));
+});
+
+/* ── 推送事件源 ───────────────────────────────────────────────────────
+   为什么它必须存在：另一个源只订阅 MR，而真实团队几乎不用 MR ——
+   只订阅 MR 的平台上「每轮都成功、每轮 0 个事件」，与「真的没有变更」
+   长得一模一样，而它其实什么都没看到。 */
+
+const COMMITS = [
+  {
+    id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    short_id: 'aaaaaaa1',
+    title: 'feat: 加一个查询接口',
+    message: 'feat: 加一个查询接口\n\n顺手把 SQL 改了。',
+    author_name: 'zhangsan',
+    committed_date: '2026-10-12T07:06:56.000Z',
+    parent_ids: ['p1'],
+  },
+  {
+    id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    short_id: 'bbbbbbb2',
+    title: "Merge remote-tracking branch 'origin/test' into test",
+    message: "Merge remote-tracking branch 'origin/test' into test",
+    author_name: 'lisi',
+    committed_date: '2026-10-10T06:35:32.000Z',
+    // 两个父 ⇒ 这是合并提交
+    parent_ids: ['p1', 'p2'],
+  },
+];
+
+const COMMIT_DIFF = [{ old_path: 'a.sql', new_path: 'a.sql', diff: '@@ -1 +1 @@\n-old\n+new' }];
+
+const pushRoutes = { '/repository/commits?': COMMITS, '/diff': COMMIT_DIFF };
+
+test('推送事件源：合并提交必须跳过 —— 否则同一处变更会被判两遍', async () => {
+  const f = fakeFetch(pushRoutes);
+  const events = await withFetch(f.impl, () =>
+    new GitLabPushSource(api(), 'g/p', { branch: 'test' }).fetch(),
+  );
+
+  assert.equal(
+    events.length,
+    1,
+    '提交列表里有两条，但其中一条的 diff 是被合进来那些改动的合集 —— 不跳过就会重复计数，而观察期的分母最怕这个',
+  );
+  const [e] = events;
+  assert.ok(e);
+  assert.equal(e.kind, 'push');
+  assert.equal(e.mrIid, undefined, '推送没有 MR 编号：动作层靠它判断有没有可评论的落点');
+  assert.equal(e.sha, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+  assert.equal(e.targetBranch, 'test');
+  assert.deepEqual(e.changedFiles, ['a.sql']);
+});
+
+test('推送事件的主张来自提交消息：title 是第一行，description 是其余部分', async () => {
+  const f = fakeFetch(pushRoutes);
+  const events = await withFetch(f.impl, () => new GitLabPushSource(api(), 'g/p', {}).fetch());
+
+  const [e] = events;
+  assert.ok(e);
+  assert.equal(e.title, 'feat: 加一个查询接口');
+  assert.equal(
+    e.description,
+    '顺手把 SQL 改了。',
+    '第一行就是 title，照搬进描述会让判据把同一句话读两遍',
+  );
+});
+
+test('事件 id 里带 sha：新推一个 sha 就是一次新事件', async () => {
+  const f = fakeFetch(pushRoutes);
+  const events = await withFetch(f.impl, () => new GitLabPushSource(api(), 'g/p', {}).fetch());
+
+  const [e] = events;
+  assert.ok(e);
+  assert.ok(e.id.includes('aaaaaaa1'), `id 应当带 short_id，实际是 ${e.id}`);
+  assert.ok(!e.id.includes('bbbbbbb2'));
+});
+
+test('没有 MR 编号时评论动作明确拒绝 —— 不硬造一个落点', async () => {
+  const action = new GitLabCommentAction({
+    api: api(),
+    project: 'g/p',
+    write: true,
+    outDir,
+  });
+
+  const result = await action.run(
+    {
+      event: {
+        id: 'gitlab-push-g-p-aaaaaaa1',
+        source: 'gitlab',
+        kind: 'push',
+        project: 'g/p',
+        sha: 'aaaa',
+        title: 't',
+        description: '',
+        author: 'a',
+        targetBranch: 'test',
+        changedFiles: ['a.sql'],
+        occurredAt: '2026-10-12T00:00:00.000Z',
+      },
+      verdicts: [
+        { policyId: 'p', policyVersion: 'v1', outcome: 'hit', reason: 'r', evidence: [] },
+      ],
+    },
+    1,
+  );
+
+  assert.equal(
+    result.ok,
+    false,
+    '没有可评论的地方就该如实报「动作没做成」——发到别处去会让人以为这条推送被评论过了',
+  );
+  assert.ok(String(result.error).includes('没有可评论的地方'));
+});
+
+test('令牌过期时自动换一个再重试 —— 不然常驻跑满两小时就每轮都失败', async () => {
+  let requests = 0;
+  let refreshes = 0;
+
+  const impl = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const url = String(input);
+
+    if (url.includes('/oauth/token')) {
+      refreshes += 1;
+      return new Response(JSON.stringify({ access_token: `fresh-${refreshes}` }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
+    requests += 1;
+    const auth = ((init?.headers ?? {}) as Record<string, string>)['authorization'];
+    if (auth !== 'Bearer fresh-1') {
+      return new Response('{"message":"401 Unauthorized"}', { status: 401 });
+    }
+    return new Response(
+      JSON.stringify([{ iid: 7, title: 't', description: null, target_branch: 'main', updated_at: 'x' }]),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    );
+  };
+
+  const client = new GitLabApi({
+    baseUrl: 'https://gitlab.example.com',
+    token: 'stale',
+    tokenKind: 'bearer',
+    refresh: async () => {
+      const res = await fetch('https://gitlab.example.com/oauth/token', { method: 'POST' });
+      return ((await res.json()) as { access_token: string }).access_token;
+    },
+  });
+
+  const out = await withFetch(impl, () => client.listMergeRequests('g/p', {}));
+
+  assert.equal(refreshes, 1, '401 之后应当去换一次令牌');
+  assert.equal(requests, 2, '原请求 → 401 → 换令牌 → 原样重发：正好两次，不多不少');
+  assert.equal(out.length, 1, '重发成功的结果要正常返回，而不是把 401 抛出去');
+});
+
+test('换不到新令牌时不循环重试 —— 一次就如实报错', async () => {
+  let requests = 0;
+  const impl = async (input: string | URL | Request): Promise<Response> => {
+    if (String(input).includes('/oauth/token')) {
+      return new Response(JSON.stringify({ access_token: 'still-stale' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    requests += 1;
+    return new Response('{"message":"401 Unauthorized"}', { status: 401 });
+  };
+
+  const client = new GitLabApi({
+    baseUrl: 'https://gitlab.example.com',
+    token: 'stale',
+    tokenKind: 'bearer',
+    refresh: async () => {
+      const res = await fetch('https://gitlab.example.com/oauth/token', { method: 'POST' });
+      return ((await res.json()) as { access_token: string }).access_token;
+    },
+  });
+
+  await assert.rejects(
+    () => withFetch(impl, () => client.listMergeRequests('g/p', {})),
+    /401/,
+    '换完还是 401 就该把错误抛出来：循环重试会把一个明确的错误变成一段看不出因果的日志',
+  );
+  assert.equal(requests, 2, '只重试一次');
 });

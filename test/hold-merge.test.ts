@@ -15,6 +15,7 @@ import type { ChangeEvent, PolicyVerdict } from '../src/types.js';
 const event: ChangeEvent = {
   id: 'gitlab-demo-7-abc123',
   source: 'gitlab',
+  kind: 'mr',
   project: 'g/p',
   mrIid: 7,
   author: 'someone',

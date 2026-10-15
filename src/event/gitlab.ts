@@ -36,8 +36,10 @@ export class GitLabPollSource implements EventSource {
         // 因此「这个版本被审过没有」有答案，而不是「这个 MR 被审过没有」
         id: `gitlab-${this.project.replace(/[^\w]+/g, '-')}-${mr.iid}-${mr.sha ?? 'nosha'}`,
         source: 'gitlab',
+        kind: 'mr',
         project: this.project,
         mrIid: mr.iid,
+        sha: mr.sha,
         title: mr.title,
         description: mr.description ?? '',
         author: mr.author?.username ?? 'unknown',

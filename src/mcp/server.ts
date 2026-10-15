@@ -333,6 +333,9 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<To
           str(args, 'eventId') ??
           `mcp-${project.replace(/[^\w]+/g, '-')}-${mrIid}-${Date.now()}`,
         source: 'mcp',
+        // Agent 申报的变更带主张（title / description）与自编的 mrIid，形态上是 mr。
+        // `as const` 是必须的：这里没有上下文类型，否则会被推成 string。
+        kind: 'mr' as const,
         project,
         mrIid,
         title,

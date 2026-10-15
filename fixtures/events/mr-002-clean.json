@@ -1,6 +1,7 @@
 {
   "id": "mock-mr-002",
   "source": "mock",
+  "kind": "mr",
   "project": "my-group/my-frontend",
   "mrIid": 102,
   "title": "对话流：修正工具卡的技能徽章位置",

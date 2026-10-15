@@ -1,6 +1,7 @@
 {
   "id": "mock-mr-003",
   "source": "mock",
+  "kind": "mr",
   "project": "my-group/my-app",
   "mrIid": 103,
   "title": "用户中心：修正几个错别字",
