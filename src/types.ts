@@ -419,4 +419,23 @@ export interface Heartbeat {
    */
   model?: string;
   modelConfigured?: boolean;
+  /**
+   * 这一轮顺手探的那个地址通不通（常驻配了 `--probe` 才有）。
+   *
+   * **为什么由常驻来探，而不是让控制台报自己。** 任何东西都测不出自己的完全崩溃：
+   * 控制台挂了，它就没法告诉你它挂了。常驻是**另一个进程**，控制台倒下的那一刻
+   * 它还在跑，于是这件事才有可能被记下来 —— 再由别的出口（简报、MCP）说出去。
+   *
+   * 心跳里带上它，意味着「打不开」这件事本身也进了留痕，而不是只靠人恰好点过一次。
+   */
+  probe?: ProbeResult;
+}
+
+export interface ProbeResult {
+  url: string;
+  ok: boolean;
+  /** 往返毫秒数（成功时才有） */
+  ms?: number;
+  /** 失败原因（失败时才有，照原文记，不改写） */
+  error?: string;
 }

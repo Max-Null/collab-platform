@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { humanDuration, judgeDaemon, toBeatSlots } from '../src/heartbeat.js';
+import { failureRuns, humanDuration, judgeDaemon, summarizeFailures, toBeatSlots } from '../src/heartbeat.js';
 import { RecordStore } from '../src/record/store.js';
 import type { Heartbeat } from '../src/types.js';
 
@@ -244,4 +244,91 @@ test('模型信息跟着心跳走：「不知道模型」与「模型没配上�
   } finally {
     store.close();
   }
+});
+
+/**
+ * 「这段时间出过事吗」—— 格带只铺最近 48 片（约 4 小时），再早的失败滑出窗口
+ * 就没人看得见了，而库里是全的。下面两条守着这个函数**不该报什么**，
+ * 因为一个天天响的告警与没有告警是一回事。
+ */
+
+const at = (h: number, m: number): string => new Date(Date.UTC(2026, 9, 16, h, m)).toISOString();
+
+test('孤立的一轮失败不算「出过事」—— 那是抖动', () => {
+  const beats: Heartbeat[] = [
+    beat(at(0, 0)),
+    beat(at(0, 5), { ok: false, error: 'fetch failed' }),
+    beat(at(0, 10)),
+  ];
+  assert.equal(
+    summarizeFailures(beats),
+    undefined,
+    '一轮失败多半是网络重连、对端重启，它自己会好 —— 为它每天占一次版面，简报就没人看了',
+  );
+});
+
+test('连续两轮才算 —— 那已经跨过一个完整的轮询间隔', () => {
+  const beats: Heartbeat[] = [
+    beat(at(0, 0)),
+    beat(at(0, 5), { ok: false, error: 'fetch failed' }),
+    beat(at(0, 10), { ok: false, error: 'fetch failed' }),
+    beat(at(0, 15)),
+  ];
+  const s = summarizeFailures(beats);
+  assert.ok(s, '同一段里连着两轮失败，就该说话了');
+  assert.equal(s.longestRun, 2);
+  assert.equal(s.failed, 2);
+  assert.equal(s.total, 4);
+  assert.equal(s.commonError, 'fetch failed', '原因要照原文给，不改写');
+});
+
+test('隔太久不算一段 —— 中间那段时间平台根本没在跑', () => {
+  // 两段各两轮失败，中间隔了 6 小时（机器睡了、进程停了）
+  const beats: Heartbeat[] = [
+    beat(at(0, 0), { ok: false, error: 'fetch failed' }),
+    beat(at(0, 5), { ok: false, error: 'fetch failed' }),
+    beat(at(6, 0), { ok: false, error: 'fetch failed' }),
+    beat(at(6, 5), { ok: false, error: 'fetch failed' }),
+  ];
+  const s = summarizeFailures(beats);
+  assert.ok(s);
+  assert.equal(
+    s.longestRun,
+    2,
+    '把停机两边算成一段「连续 4 轮失败」是假的 —— 中间那 6 小时它压根没跑',
+  );
+  assert.equal(s.failed, 4, '但总数照实算：失败就是失败了四次');
+});
+
+test('切段：中间成功过、或者隔了太久，都是新的一段', () => {
+  const beats: Heartbeat[] = [
+    beat(at(0, 0), { ok: false, error: 'e1' }),
+    beat(at(0, 5), { ok: false, error: 'e1' }),
+    beat(at(0, 10)), // 成功 → 断开
+    beat(at(0, 15), { ok: false, error: 'e2' }), // 新的一段
+    beat(at(6, 0), { ok: false, error: 'e2' }), // 隔 6 小时（机器睡了）→ 又一段
+  ];
+  const runs = failureRuns(beats);
+  assert.equal(runs.length, 3);
+  assert.equal(runs[0]?.count, 2);
+  assert.deepEqual(runs[0]?.errors, ['e1'], '错误原文照记，去重但保序');
+  assert.equal(runs[1]?.count, 1);
+  assert.equal(runs[2]?.count, 1);
+});
+
+test('结论与明细必须同源 —— 两个数字对不上，人就不再信任何一个', () => {
+  const beats: Heartbeat[] = [
+    beat(at(0, 0), { ok: false, error: 'x' }),
+    beat(at(0, 5), { ok: false, error: 'x' }),
+    beat(at(0, 10)),
+    beat(at(0, 15), { ok: false, error: 'x' }),
+    beat(at(0, 20), { ok: false, error: 'x' }),
+    beat(at(0, 25), { ok: false, error: 'x' }),
+  ];
+  const s = summarizeFailures(beats);
+  const longest = failureRuns(beats).reduce((a, b) => (b.count > a.count ? b : a));
+  assert.ok(s);
+  assert.equal(s.longestRun, longest.count);
+  assert.equal(s.runFrom, longest.from);
+  assert.equal(s.runTo, longest.to);
 });

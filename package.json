@@ -14,6 +14,8 @@
     "mcp": "node --experimental-sqlite --disable-warning=ExperimentalWarning dist/src/mcp/server.js",
     "console": "npm run build && node --experimental-sqlite --disable-warning=ExperimentalWarning dist/src/console/server.js",
     "briefing": "npm run build && node --experimental-sqlite --disable-warning=ExperimentalWarning dist/src/briefing-cli.js",
+    "diagram:live": "npm run build && node --experimental-sqlite --disable-warning=ExperimentalWarning scripts/make-live-diagram.mjs",
+    "diagram:map": "npm run build && node --experimental-sqlite --disable-warning=ExperimentalWarning scripts/make-live-diagram.mjs --src var/archify/platform-architecture.html --out var/diagram/architecture.html",
     "watch": "npm run build && node --experimental-sqlite --disable-warning=ExperimentalWarning dist/src/daemon.js",
     "undo": "npm run build && node --experimental-sqlite --disable-warning=ExperimentalWarning dist/src/undo.js",
     "guard": "node scripts/check-ssot.mjs && node scripts/check-skill-budget.mjs",

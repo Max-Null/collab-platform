@@ -255,12 +255,35 @@
   #tourInvite .ti-t{font-weight:620;margin-bottom:5px;font-size:13px}
   #tourInvite .ti-b{color:var(--ink-2)}
   #tourInvite .ti-f{display:flex;gap:8px;margin-top:10px;justify-content:flex-end}
+
+  /* 应用条：三处页面共用的一条。样式与 live-overlay 注入的那条**对齐** ——
+     两处各写一份是没办法的事（一个是静态 HTML、一个是注入脚本），
+     但值必须一致，否则「同一套东西」看起来还是两套。 */
+  .appbar{display:flex;gap:2px;align-items:center;padding:0 18px;height:46px;
+    background:rgba(255,255,255,.94);border-bottom:1px solid #e8e8e8;
+    font:13px/1 system-ui,-apple-system,sans-serif;position:sticky;top:0;z-index:100}
+  .appbar-brand{font-weight:650;color:#1a1a1a;margin-right:16px;font-size:14px}
+  .appbar a{color:#5a5a5a;text-decoration:none;padding:6px 12px;border-radius:7px}
+  .appbar a:hover{background:#f0f0f0;color:#111}
+  .appbar-here{color:#111;background:#ececec;font-weight:600;padding:6px 12px;border-radius:7px}
 </style>
 </head>
 <body>
 
+<!-- 应用条：与两张图上是同一条（那边由 live-overlay 注入，这里是自己渲染）。
+     「换页」与「页内跳转」是两码事，所以分两行摆：上面三处是页面，下面是这页里的区。
+     分开之前它们是混在一起的，读的人分不清「链路图」和「待办」哪个会换页。 -->
+<div class="appbar">
+  <span class="appbar-brand">协作平台</span>
+  <span class="appbar-here">控制台</span>
+  <a href="/diagram">链路图</a>
+  <a href="/map">母机地图</a>
+  <span class="spacer"></span>
+</div>
+
 <header>
-  <h1>协作平台 · 控制台</h1>
+  <!-- 不重复写「控制台」—— 应用条已经高亮它了。这里只放这一页自己的信息：
+       数据来自哪个库、以及本页内的跳转。 -->
   <span class="env" id="env"></span>
   <span class="spacer"></span>
   <nav>
@@ -301,6 +324,14 @@
   <section id="status">
     <h2>平台状态 <i class="help-tip" data-tip="status" tabindex="0">?</i></h2>
     <div id="statusCard"></div>
+  </section>
+
+  <!-- ═══════════════ 失败轮次（点开看证据）═══════════════ -->
+  <!-- 只在真有失败段时才显示：一个天天空的区块会让人不再看它 -->
+  <section id="failures" hidden>
+    <h2>失败轮次 <span class="count" id="failuresCount"></span></h2>
+    <p class="lede">最近 7 天里连着失败过的那几段。它回答的是心跳格带答不了的问题 —— 格带只铺最近 4 小时，再早的失败滑出去就没人看得见了，而库里是全的。</p>
+    <div id="failuresList"></div>
   </section>
 
   <!-- ═══════════════ 运行图 ═══════════════ -->
@@ -894,6 +925,44 @@ document.querySelectorAll('.tabs button').forEach(b => {
   });
 });
 
+/* ── 失败轮次：图上「连片失败过 N 轮」那个标记点进来，就是这里 ──
+   它给的是**证据**而不是结论：哪一段、什么时候、每轮错在哪。 */
+function localStamp(iso){
+  const d = new Date(iso), p = n => String(n).padStart(2,'0');
+  return `${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+async function loadFailures(){
+  let d;
+  try { d = await api('/api/failures?days=7'); }
+  catch { $('#failures').hidden = true; return; }   // 拉不到就整块不显示，别留个空壳让人以为没失败过
+  const runs = d && d.runs ? d.runs : [];
+  if(runs.length === 0){ $('#failures').hidden = true; return; }
+
+  $('#failures').hidden = false;
+  $('#failuresCount').textContent = `${runs.length} 段 · 共 ${d.failed}/${d.total} 轮失败`;
+
+  $('#failuresList').innerHTML = runs.map((r, i) => {
+    const span = r.from === r.to ? localStamp(r.from)
+      : `${localStamp(r.from)} → ${localStamp(r.to)}`;
+    const shown = r.beats.slice(0, 6);
+    const rest = r.beats.length - shown.length;
+    const rows = shown.map(b =>
+      `<tr><td style="white-space:nowrap">${localStamp(b.at)}</td>`
+      + `<td>${b.error ? esc(b.error) : '（没记原因）'}</td>`
+      + `<td style="text-align:right">${b.durationMs} ms</td></tr>`).join('');
+    return `<div class="card${i === 0 ? ' hit' : ''}">
+      <div><b>连续 ${r.count} 轮</b> <span style="color:#888;font-size:12px">${span}</span></div>
+      <div style="margin:6px 0"><code>${r.errors.map(esc).join(' · ') || '（没记原因）'}</code></div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr style="color:#888;text-align:left">
+          <th>时刻（本地）</th><th>错误</th><th style="text-align:right">一轮耗时</th></tr></thead>
+        <tbody>${rows}</tbody></table>
+      ${rest > 0 ? `<div style="color:#888;font-size:12px;margin-top:4px">还有 ${rest} 轮没列 —— 同一段里它们的原因都一样</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
 /* ── 加载 ───────────────────────────────────────────── */
 async function load(){
   const [ov, pend] = await Promise.all([api('/api/overview'), api('/api/pending')]);
@@ -915,6 +984,8 @@ async function load(){
   renderFlow(ov.flow, ov.policies.length);
   renderTodo(pend.rows);
   renderStats(ov.stats);
+  // 不 await：它是次要信息，拉不到不该拖住整页
+  void loadFailures();
 
   const sel = $('#fPolicy');
   if(sel.options.length <= 1){

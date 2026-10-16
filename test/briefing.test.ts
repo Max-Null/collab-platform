@@ -120,3 +120,59 @@ test('观察期只报数、不给建议', () => {
     assert.ok(!text.includes(banned), `不该出现评价性措辞：${banned}`);
   }
 });
+
+const dead = (at: string): Heartbeat => ({ ...beat(at), ok: false, error: 'fetch failed' });
+
+test('探针不通要说 —— 那是图唯一说不了的一件事', () => {
+  const text = renderBriefing({
+    ...base,
+    pending: [],
+    errors: [],
+    probe: { url: 'http://127.0.0.1:8793/', ok: false, error: 'fetch failed' },
+  });
+  assert.ok(text, '控制台打不开，而简报是少数还能开口的出口之一');
+  assert.match(text, /打不开/);
+  assert.match(text, /fetch failed/, '原因照原文给');
+});
+
+test('探得通就不占版面 —— 没事别说话', () => {
+  const text = renderBriefing({
+    ...base,
+    pending: [],
+    errors: [],
+    probe: { url: 'http://127.0.0.1:8793/', ok: true, ms: 12 },
+  });
+  assert.equal(text, undefined, '探通是常态，不是新闻');
+});
+
+test('孤立的一轮失败不占版面 —— 变了味的告警等于没有告警', () => {
+  const text = renderBriefing({
+    ...base,
+    pending: [],
+    errors: [],
+    recentBeats: [beat('2026-10-15T09:00:00Z'), dead('2026-10-15T09:05:00Z'), beat('2026-10-15T09:10:00Z')],
+  });
+  assert.equal(text, undefined, '一轮失败多半是抖动，它自己会好');
+});
+
+test('连着两轮失败就要说话 —— 这些事发生时没人被告知过', () => {
+  const text = renderBriefing({
+    ...base,
+    pending: [],
+    errors: [],
+    recentBeats: [
+      beat('2026-10-15T09:00:00Z'),
+      dead('2026-10-15T09:05:00Z'),
+      dead('2026-10-15T09:10:00Z'),
+    ],
+  });
+  assert.ok(text, '连续两轮已经跨过一个完整的轮询间隔，那不是抖动');
+  assert.match(text, /最近出过事/);
+  assert.match(text, /连续 \*\*2 轮\*\*/);
+  assert.match(text, /fetch failed/, '原因照原文给');
+  assert.match(text, /不会因此漏判/, '要说清它不会造成漏判，否则读的人第一反应是「那漏了什么」');
+  assert.ok(
+    !text.includes('2026-10-15T09:05'),
+    '时刻要按本地时间写成人能读的样子，不要把 ISO 的 UTC 原样摆出来',
+  );
+});

@@ -1,5 +1,5 @@
-import { judgeDaemon } from './heartbeat.js';
-import type { Heartbeat, JudgmentRecord, PolicyVersionStats } from './types.js';
+import { judgeDaemon, summarizeFailures } from './heartbeat.js';
+import type { Heartbeat, JudgmentRecord, PolicyVersionStats, ProbeResult } from './types.js';
 
 /**
  * 每日简报 —— 「今天该看什么」。
@@ -29,12 +29,37 @@ export interface BriefingInput {
   stats: PolicyVersionStats[];
   /** 过去 24 小时新落的判定条数 */
   last24h: number;
+  /**
+   * 这段时间（约定 7 天）的全部心跳，按时间正序。
+   *
+   * 为什么要在这里再传一份：`lastBeat` 只够判「现在跑没跑」，而**「这段时间出过事吗」
+   * 要的是时间范围** —— 控制台的格带只铺最近 48 片（约 4 小时），再早的失败滑出窗口
+   * 就没人看得见了，而库里是全的。省略时简报就不报这一节。
+   */
+  recentBeats?: Heartbeat[];
+  /**
+   * 常驻最近一轮探的那个地址通不通。
+   *
+   * 它回答的是**这套系统自己测不出自己的那一块**：控制台挂了，它报不出自己挂了；
+   * 库坏了，读库的东西全哑。而常驻是另一个进程，它还在 —— 所以这件事得由它记、
+   * 由**别的出口**说出去（这份简报、MCP）。图说不了这件事，因为图就在控制台上。
+   */
+  probe?: ProbeResult;
 }
 
 /** 一条记录的摘要行：编号 + 策略 + 那句话的前半截 */
 function line(r: JudgmentRecord): string {
   const reason = (r.reason ?? '（没有给出说明）').replace(/\s+/g, ' ').slice(0, 90);
   return `- #${r.id} \`${r.policyId}\` · ${r.eventId}\n  ${reason}`;
+}
+
+/** 心跳时刻按**本地时间**写成「月-日 时:分」—— 库里的 at 是 UTC，直接摆出来会让人看错 */
+function localStamp(iso: string | undefined): string {
+  if (!iso) return '（时刻未知）';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '（时刻未知）';
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 function fold(rows: JudgmentRecord[]): string {
@@ -52,7 +77,19 @@ export function renderBriefing(input: BriefingInput): string | undefined {
 
   // 「平台没在跑」本身就是一件要人决定的事 —— 它是这个简报存在的第一理由。
   const platformNeedsAttention = daemon.status === 'stopped' || daemon.status === 'never';
-  const nothingToSay = input.errors.length === 0 && input.pending.length === 0 && !platformNeedsAttention;
+
+  // 「这段时间出过事」与它同理：平台健康是这份简报存在的第一理由，而
+  // 「昨天连着 21 轮拉不到仓库」正属于这一类 —— 它当时没有告诉任何人。
+  const failures = summarizeFailures(input.recentBeats ?? []);
+  // 「另一个东西打不开」也要说 —— 而且它是**唯一**能说这件事的地方（图在控制台上，
+  // 控制台挂了图也就没了）。它同样属于「平台健康」，所以参与同一条判断。
+  const probeDown = input.probe && !input.probe.ok ? input.probe : undefined;
+  const nothingToSay =
+    input.errors.length === 0 &&
+    input.pending.length === 0 &&
+    !platformNeedsAttention &&
+    !failures &&
+    !probeDown;
   if (nothingToSay) return undefined;
 
   const day = input.now.toISOString().slice(0, 10);
@@ -68,6 +105,40 @@ export function renderBriefing(input: BriefingInput): string | undefined {
       daemon.status === 'never'
         ? '⚠️ 这个库里没有任何心跳记录 —— 常驻要么没在这份数据上跑过，要么跑在心跳落库之前。下面看到的都是手工跑或更早留下的。'
         : '⚠️ 常驻已经停了 —— 在它被拉起来之前，没有任何东西在看着仓库。',
+    );
+    out.push('');
+  }
+
+  // —— 打不开：这套系统自己测不出自己的那一块 ——
+  if (probeDown) {
+    out.push(`## 打不开 · ${probeDown.url}`, '');
+    out.push(`- 常驻最近一轮探它是**不通**的：\`${probeDown.error ?? '没给原因'}\``);
+    out.push('');
+    out.push(
+      '> 这件事只有常驻能记下来：那个东西挂了，它自己报不出来。' +
+        '所以别指望在图上看它 —— 图就在它上面。',
+    );
+    out.push('');
+  }
+
+  // —— 这段时间出过事 ——
+  // 它排在待办之前：这些事发生时没人被告知，而格带只铺最近 4 小时，早滑出去了。
+  if (failures) {
+    out.push(`## 最近出过事 · 连续 ${failures.longestRun} 轮失败`, '');
+    out.push(
+      `- ${localStamp(failures.runFrom)} 到 ${localStamp(failures.runTo)}，连续 **${failures.longestRun} 轮**没能拉到仓库`,
+    );
+    out.push(`- 这段时间共 ${failures.total} 轮，失败 ${failures.failed} 轮`);
+    if (failures.commonError) out.push(`- 最常见的原因：\`${failures.commonError}\``);
+    out.push('');
+    out.push(
+      '> **不会因此漏判** —— 轮询每次拉最新的一批，网络恢复后同样的事件会被重新拉到。' +
+        '漏的是「这件事没人告诉过你」。',
+    );
+    out.push('');
+    out.push(
+      '> 为什么不报孤立的失败：一轮失败多半是抖动（网络重连、对端重启），它自己会好；' +
+        '**连续两轮就已经跨过一个完整的轮询间隔**了，那不是抖动。',
     );
     out.push('');
   }

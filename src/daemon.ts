@@ -5,7 +5,7 @@ import { GitLabPushSource } from './event/gitlab-push.js';
 import type { EventSource } from './event/source.js';
 import { GitLabApi, fetchOAuthToken } from './gitlab/api.js';
 import { runPipeline } from './pipeline.js';
-import type { Heartbeat } from './types.js';
+import type { Heartbeat, ProbeResult } from './types.js';
 import { wire } from './wiring.js';
 
 /**
@@ -53,6 +53,14 @@ const { values } = parseArgs({
     source: { type: 'string', default: 'push' },
     /** push 源订阅哪个分支；不填则用仓库的默认分支 */
     branch: { type: 'string' },
+    /**
+     * 每轮顺手探一下这个地址，结果落进心跳（不填就不探）。
+     *
+     * 探的是**这套系统里自己没法自证的那部分**：控制台挂了，它报不出自己挂了。
+     * 常驻是另一个进程，那一刻它还在 —— 于是「打不开」这件事才有可能被记下来，
+     * 再由别的出口（简报、MCP）说出去。见 types.ts 的 Heartbeat.probe。
+     */
+    probe: { type: 'string' },
     once: { type: 'boolean', default: false },
   },
   allowPositionals: false,
@@ -65,6 +73,26 @@ function need(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`常驻跑真实事件源时必须配环境变量 ${name}`);
   return v;
+}
+
+/**
+ * 探一下那个地址还在不在。
+ *
+ * ⚠️ **任何 HTTP 状态码都算「通」。** 401 / 403 / 404 都说明服务在应答 ——
+ * 而这里要回答的问题是「**它还在不在**」，不是「我有没有权限」。把 401 记成不通，
+ * 就会每天报一次假警，而**天天响的告警与没有告警是一回事**。
+ *
+ * ⚠️ **不重试**：一轮轮询的预算有限，而且重试会把「偶尔抖一下」抹平 ——
+ * 抖动也是事实，下一轮自会再探一次。
+ */
+async function probeOnce(url: string, timeoutMs = 5000): Promise<ProbeResult> {
+  const started = Date.now();
+  try {
+    await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    return { url, ok: true, ms: Date.now() - started };
+  } catch (e) {
+    return { url, ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 /** 打时间戳的日志 —— 长跑进程里没有时间戳的日志等于没有日志 */
@@ -160,6 +188,14 @@ async function main(): Promise<void> {
       });
     };
 
+    // 顺手探一下那个地址（配了才探）。
+    //
+    // ⚠️ 探不通**不算这一轮失败**：探针回答的是「另一个东西还在不在」，
+    // 与「这一轮拉事件、判事件」是两件事。混在一起会让心跳的 ok 失去意义 ——
+    // 到那时「这一轮失败了」既可能是 GitLab 拉不到，也可能是控制台打不开，
+    // 而这两件事要做的事完全不同。
+    const probe = values.probe ? await probeOnce(values.probe) : undefined;
+
     try {
       // 多个源各自拉，合成一批。
       //
@@ -198,14 +234,18 @@ async function main(): Promise<void> {
       log(
         `第 ${rounds} 轮：拉到 ${events.length} 个事件 · 新判 ${judged} · 跳过 ${skipped}（已判过）· ${ms}ms`,
       );
-      beat({ ok: true, events: events.length, judged, skipped });
+      beat({ ok: true, events: events.length, judged, skipped, probe });
     } catch (e) {
       // 一轮失败不让进程死。见文件头 ①。
       const msg = e instanceof Error ? e.message : String(e);
       log(`第 ${rounds} 轮失败（下一轮继续）：${msg}`);
       // 失败也落心跳：不落的话，「这一轮挂了」与「这一轮没有新事件」在库里长得一样
-      beat({ ok: false, events: 0, judged: 0, skipped: 0, error: msg });
+      beat({ ok: false, events: 0, judged: 0, skipped: 0, error: msg, probe });
     }
+
+    // 探不通就当场喊一句。库里记着是一回事，日志里看得见是另一回事 ——
+    // 长跑进程的日志是排查时第一个被翻的东西。
+    if (probe && !probe.ok) log(`    探针：${probe.url} 不通 —— ${probe.error ?? '没给原因'}`);
   };
 
   await tick();

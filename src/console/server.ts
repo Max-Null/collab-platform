@@ -3,8 +3,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { judgeDaemon, toBeatSlots } from '../heartbeat.js';
-import { judgeHealth } from '../policy/health.js';
+import { buildOverview } from './overview.js';
+import { failureRuns } from '../heartbeat.js';
 import { parseUsage } from '../usage.js';
 import { wire } from '../wiring.js';
 import type { Reaction } from '../types.js';
@@ -31,6 +31,10 @@ const { values } = parseArgs({
     port: { type: 'string', default: '8790' },
     db: { type: 'string', default: 'var/platform.db' },
     out: { type: 'string', default: 'var/comments' },
+    // 活点地图（设计链路 + 此刻状态）由 make-live-diagram 生成到这里
+    diagram: { type: 'string', default: 'var/diagram/live.html' },
+    // 母机的结构图 —— 另起一个路由而不是塞进 /diagram：两张图回答不同的问题
+    map: { type: 'string', default: 'var/diagram/architecture.html' },
   },
   allowPositionals: false,
 });
@@ -105,66 +109,80 @@ function handle(req: IncomingMessage, res: ServerResponse, url: URL): void {
     return;
   }
 
+  // 两张活点地图：`/diagram` 是一次变更怎么走（流程），`/map` 是母机由什么组成（结构）。
+  // 它们回答不同的问题，所以是两个路由而不是一个带参数的路由 —— 名字本身就是答案的一半。
+  if (path === '/diagram' || path === '/map') {
+    const rel = path === '/map' ? values.map : values.diagram;
+    const file = resolve(root, rel);
+    let html: string | undefined;
+    try {
+      html = readFileSync(file, 'utf8');
+    } catch {
+      html = undefined;
+    }
+
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+    res.end(
+      html ??
+        // 没生成时不说 404 —— 404 的意思是「路径写错了」，而这里是「还没做」，
+        // 两者要做的事完全不同（一个去查路径，一个去跑那条命令）。
+        `<!doctype html><meta charset="utf-8"><title>活点地图 · 还没生成</title>
+         <body style="font:15px/1.8 system-ui,sans-serif;max-width:38em;margin:5em auto;padding:0 1.5em;color:#333">
+         <h1 style="font-size:1.25em">这张图还没生成</h1>
+         <p>它把<b>设计上的结构与链路</b>与<b>此刻每一步的真实状态</b>叠在一起 —— 所以得生成一次才存在。</p>
+         <p>在仓库根目录跑：<code style="background:#f2f2f2;padding:.15em .4em;border-radius:3px">npm run diagram:live</code>（流程：一次变更怎么走）<br>
+            或者 <code style="background:#f2f2f2;padding:.15em .4em;border-radius:3px">npm run diagram:map</code>（结构：母机由什么组成）</p>
+         <p style="color:#888;font-size:.9em">这个地址对应：<code>${rel}</code></p>
+         <p><a href="/">← 回控制台</a></p></body>`,
+    );
+    return;
+  }
+
   if (path === '/api/overview') {
-    const stats = w.store.statsByPolicyVersion();
-    const pending = w.store.listPendingReactions(200);
-    const errors = w.store.listUnresolvedErrors(200);
-    const lastBeat = w.store.lastHeartbeat();
-    const lastJudgmentAt = w.store.lastJudgmentAt();
+    // 组装逻辑在 console/overview.ts：活点地图的静态快照也要同一份。
+    // 两处各写一遍的话，界面上的数字与图上的标记迟早会对不上 —— 而那种不一致不会报错。
+    return json(res, buildOverview(w, dbPath));
+  }
+
+  /**
+   * 失败轮次的明细 —— 图上「连片失败过 N 轮」那个标记点开看的就是它。
+   *
+   * 与 `/api/overview` 里的 `failures` 是同一份数据的两种粒度：那边给结论
+   * （最长多少轮、共失败多少），这边给**证据**（每一段的时刻、每轮的错误原文）。
+   * 切段的判据只有一处（`failureRuns`），所以两个数字不会对不上。
+   */
+  if (path === '/api/failures') {
+    const raw = Number(url.searchParams.get('days') ?? 7);
+    const days = Number.isFinite(raw) && raw > 0 && raw <= 90 ? raw : 7;
+    const since = new Date(Date.now() - days * 86400_000).toISOString();
+    const beats = w.store.heartbeatsSince(since);
 
     return json(res, {
-      policies: w.policies.map((p) => ({
-        id: p.id,
-        version: p.version,
-        description: p.description,
-        disposal: p.disposal,
-      })),
-      // 统计里带上健康判定 —— 判据只该有一处（policy/health.ts），
-      // 前端不自己算，否则两边迟早给出不同结论
-      stats: w.store.statsByPolicyVersion().map((s) => {
-        const p = w.policies.find((x) => x.id === s.policyId);
-        return {
-          ...s,
-          health: judgeHealth({
-            enabled: p?.enabled !== false,
-            total: s.total,
-            hit: s.hit,
-            error: s.error,
-          }),
-        };
-      }),
-      /** 运行图要的四段数字。四段的数目要能对得上账，否则人看图会以为是自己看错了。 */
-      flow: w.store.flow(),
-      pendingCount: pending.length,
-      // 「判断没做成」单独计数：它比命中更需要人看见，也不是「未命中」
-      errorPendingCount: errors.length,
-      model: { name: w.llm.name, model: w.llm.model, configured: w.llmConfigured },
-      dbPath,
-      /**
-       * 平台**现在**的状态 —— 与上面每一个数都不同性质。
-       *
-       * 上面那些回答的是「它做过什么」，而累计数字永远看起来像「一直都在
-       * 正常工作」：一个停了 21 小时的平台，它的累计统计与一个正在跑的
-       * 一模一样。这一项回答的是「它还在不在」，判据在 heartbeat.ts。
-       */
-      daemon: {
-        ...judgeDaemon({ last: lastBeat, lastJudgmentAt }),
-        last: lastBeat ?? null,
-        lastJudgmentAt: lastJudgmentAt ?? null,
-        /**
-         * 最近的心跳，按时间正序 —— 状态卡上那排格带用它。
-         *
-         * 与 `last` 是两种东西：`last` 回答「此刻还在不在」，格带回答
-         * 「**最近稳不稳**」—— 「每隔几轮就迟一次」与「一直很稳」在后者的眼里
-         * 完全不同，而在只有一个圆点的界面里长得一模一样。
-         */
-        beats: toBeatSlots(w.store.recentHeartbeats(200), { now: new Date(), slots: 48 }),
-      },
+      window: { since, days },
+      total: beats.length,
+      failed: beats.filter((b) => !b.ok).length,
+      // 最近的段排前面 —— 人找的是「最近一次什么时候断的」
+      runs: failureRuns(beats)
+        .slice()
+        .reverse()
+        .map((r) => ({
+          from: r.from,
+          to: r.to,
+          count: r.count,
+          errors: r.errors,
+          beats: r.beats.map((b) => ({
+            at: b.at,
+            events: b.events,
+            judged: b.judged,
+            skipped: b.skipped,
+            durationMs: b.durationMs,
+            error: b.error ?? null,
+          })),
+        })),
     });
   }
 
-  if (path === '/api/pending') {
-    const rows = w.store.listPendingReactions(200);
+  if (path === '/api/pending') {    const rows = w.store.listPendingReactions(200);
 
     // 排序：判断没做成的排前面 —— 它不是「有问题」，是「这次没看」，
     // 而没看比看错了更容易被忽略，因为它不留痕迹

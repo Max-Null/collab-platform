@@ -197,3 +197,117 @@ export function toBeatSlots(
 
   return out;
 }
+
+/** 连续失败达到几轮才值得说 —— 理由见 `summarizeFailures` */
+export const FAILURE_RUN_AT = 2;
+
+/** 相邻两条心跳隔了超过这个倍数（× 轮询间隔）就不算同一段 */
+const RUN_GAP_FACTOR = 2;
+
+export interface FailureSummary {
+  /** 这段时间一共多少轮 */
+  total: number;
+  /** 其中失败多少轮（不要求连续） */
+  failed: number;
+  /** 最长的一段**连续**失败有多少轮 */
+  longestRun: number;
+  runFrom?: string;
+  runTo?: string;
+  /** 失败原因里最常见的那一条（原文，不改写） */
+  commonError?: string;
+}
+
+/** 一段连着的失败 —— 「看证据」那个页面要的明细 */
+export interface FailureRun {
+  from: string;
+  to: string;
+  /** 这一段里失败了几轮 */
+  count: number;
+  /** 这段里出现过的错误（去重、保序；原文，不改写） */
+  errors: string[];
+  beats: Heartbeat[];
+}
+
+/**
+ * 把心跳按「连着失败」切成一段一段。
+ *
+ * 与 `summarizeFailures` 分开，是因为调用方要的东西不同：简报只要一个结论
+ * （最长那段多少轮），而「看证据」那个页面要每一段的明细（时刻、错误原文、
+ * 那一轮的数字）。**但判据是同一条**（下面那个 `contiguous`）—— 两处各写一遍的话，
+ * 迟早会出现「简报说连着 25 轮、明细页面列出 26 条」这种对不上的事，
+ * 而那种不一致不会报错，只会让人不再信任两个数字。
+ */
+export function failureRuns(beats: Heartbeat[]): FailureRun[] {
+  const runs: FailureRun[] = [];
+  let cur: FailureRun | undefined;
+  let prev: Heartbeat | undefined;
+
+  for (const b of beats) {
+    const contiguous =
+      prev !== undefined && Date.parse(b.at) - Date.parse(prev.at) <= prev.intervalMs * RUN_GAP_FACTOR;
+    if (b.ok || !contiguous) cur = undefined;
+
+    if (!b.ok) {
+      if (!cur) {
+        cur = { from: b.at, to: b.at, count: 0, errors: [], beats: [] };
+        runs.push(cur);
+      }
+      cur.to = b.at;
+      cur.count += 1;
+      cur.beats.push(b);
+      if (b.error && !cur.errors.includes(b.error)) cur.errors.push(b.error);
+    }
+    prev = b;
+  }
+
+  return runs;
+}
+
+/**
+ * 「这段时间平台出过事吗」—— 回答那个 48 片格带回答不了的问题。
+ *
+ * 格带只铺最近 48 片（约 4 小时），再早的失败滑出窗口就没人看得见了；
+ * 而库里是**全的**。这个函数就是把它读出来。两条判据：
+ *
+ * - **连片才算数**：孤立的一轮失败多半是抖动（网络重连、对端重启），它自己会好；
+ *   而**连续两轮就已经跨过一个完整的轮询间隔**了，那不是抖动。
+ * - **隔太久不算一段**：中间那段时间平台根本没在跑（机器睡了、进程停了）——
+ *   把两边算成一段「连续失败」是假的，所以间隔超过 2 倍轮询间隔就断开。
+ *
+ * 没什么要说的就返回 `undefined`，与简报「没内容就不发」的纪律一致。
+ */
+export function summarizeFailures(beats: Heartbeat[]): FailureSummary | undefined {
+  if (beats.length === 0) return undefined;
+
+  // 判据只有一条：切段在 failureRuns 里，这里只取最长的那段。
+  const longest = failureRuns(beats).reduce<FailureRun | undefined>(
+    (a, b) => (a === undefined || b.count > a.count ? b : a),
+    undefined,
+  );
+  if (!longest || longest.count < FAILURE_RUN_AT) return undefined;
+
+  const best = longest.count;
+  const bestFrom = longest.from;
+  const bestTo = longest.to;
+
+  const errors = beats.filter((b) => !b.ok && b.error).map((b) => String(b.error));
+  const counts = new Map<string, number>();
+  for (const e of errors) counts.set(e, (counts.get(e) ?? 0) + 1);
+  let commonError: string | undefined;
+  let commonN = 0;
+  for (const [e, n] of counts) {
+    if (n > commonN) {
+      commonError = e;
+      commonN = n;
+    }
+  }
+
+  return {
+    total: beats.length,
+    failed: beats.filter((b) => !b.ok).length,
+    longestRun: best,
+    runFrom: bestFrom,
+    runTo: bestTo,
+    commonError,
+  };
+}

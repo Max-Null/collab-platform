@@ -1,0 +1,93 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "协作平台 · 一次变更的生命周期",
+    "subtitle": "数据基准 2026-10-16（master）· archify 3.1.0 生成",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "var/archify/collab-lifecycle.html"
+  },
+  "lanes": [
+    { "id": "gitlab", "label": "GitLab · 代码托管（只读）" },
+    { "id": "daemon", "label": "常驻进程 · 每 300 秒一轮" },
+    { "id": "policy", "label": "策略层 · 触发 / 取数 / 判据" },
+    { "id": "action", "label": "结局与处置 · 动作层" },
+    { "id": "record", "label": "判断记录 · SQLite（只追加）" },
+    { "id": "human", "label": "人与出口 · 控制台 / MCP" }
+  ],
+  "phases": [
+    { "id": "p-collect", "label": "采集 · 每 300 秒一轮", "fromCol": 0, "toCol": 1 },
+    { "id": "p-prepare", "label": "触发 · 取数", "fromCol": 2, "toCol": 2 },
+    { "id": "p-judge", "label": "判据", "fromCol": 3, "toCol": 3, "variant": "emphasis" },
+    { "id": "p-outcome", "label": "三种结局必须分开", "fromCol": 4, "toCol": 4, "variant": "security" },
+    { "id": "p-record", "label": "留痕 · 回写", "fromCol": 5, "toCol": 5 }
+  ],
+  "groups": [
+    { "id": "g-dryrun", "label": "干燥跑：同一条代码路径，只是不发出去", "lane": "action", "fromCol": 5, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["ev-mr", "poll", "trigger", "gather", "judge", "hit", "act-comment", "record", "console", "reaction"],
+  "semanticChecks": {
+    "allowedRoots": ["ev-mr", "ev-push"],
+    "allowedTerminals": ["reaction", "miss", "error"]
+  },
+  "nodes": [
+    { "id": "ev-mr", "lane": "gitlab", "col": 0, "type": "external", "label": "合并请求", "sublabel": "有主张 · 有落点", "icon": "frontend", "yOffset": -42 },
+    { "id": "ev-push", "lane": "gitlab", "col": 0, "type": "external", "label": "分支推送", "sublabel": "主张 = 提交消息", "icon": "messagebus", "yOffset": 42 },
+    { "id": "poll", "lane": "daemon", "col": 1, "type": "cloud", "label": "轮询", "sublabel": "只读 · 每轮落一条心跳", "icon": "clock" },
+    { "id": "trigger", "lane": "policy", "col": 2, "type": "security", "label": "触发检查", "sublabel": "不关心就静默跳过", "icon": "security", "yOffset": -50 },
+    { "id": "gather", "lane": "policy", "col": 2, "type": "backend", "label": "取数", "sublabel": "白名单 · 取不到≠空", "icon": "backend", "yOffset": 50 },
+    { "id": "judge", "lane": "policy", "col": 3, "type": "security", "label": "判据", "sublabel": "路径规则 + 模型判据", "icon": "security" },
+    { "id": "hit", "lane": "action", "col": 4, "type": "backend", "label": "命中", "sublabel": "有主张要人确认", "icon": "success", "yOffset": -95 },
+    { "id": "miss", "lane": "action", "col": 4, "type": "backend", "label": "未命中", "sublabel": "看过，没问题", "icon": "neutral", "yOffset": 0 },
+    { "id": "error", "lane": "policy", "col": 4, "type": "security", "label": "判断没做成", "sublabel": "取不到数 / 模型不通", "icon": "failure", "yOffset": 95 },
+    { "id": "act-comment", "lane": "action", "col": 5, "type": "external", "label": "评论", "sublabel": "写开关默认关", "icon": "external" },
+    { "id": "record", "lane": "record", "col": 5, "type": "database", "label": "判断记录", "sublabel": "三态都落 · 永不删", "icon": "database" },
+    { "id": "console", "lane": "human", "col": 5, "type": "frontend", "label": "控制台 / MCP", "sublabel": "待办 · 平台状态 · 依据", "icon": "person", "yOffset": -42 },
+    { "id": "reaction", "lane": "human", "col": 5, "type": "external", "label": "回写反应", "sublabel": "采纳 / 否定 / 无视", "icon": "flag", "yOffset": 42 }
+  ],
+  "edges": [
+    { "id": "e-mr-poll", "from": "ev-mr", "to": "poll", "label": "每轮扫一遍", "variant": "emphasis", "role": "main" },
+    { "id": "e-push-poll", "from": "ev-push", "to": "poll", "label": "读分支提交", "variant": "emphasis", "role": "main" },
+    { "id": "e-poll-trigger", "from": "poll", "to": "trigger", "label": "每个事件 · 每条策略各判一次", "variant": "emphasis", "role": "main" },
+    { "id": "e-trigger-gather", "from": "trigger", "to": "gather", "label": "这类事件归它管", "variant": "emphasis", "role": "main" },
+    { "id": "e-gather-judge", "from": "gather", "to": "judge", "label": "只取白名单内的", "variant": "emphasis", "role": "main" },
+    { "id": "e-judge-hit", "from": "judge", "to": "hit", "label": "命中", "variant": "emphasis", "role": "main" },
+    { "id": "e-judge-miss", "from": "judge", "to": "miss", "label": "未命中", "role": "branch" },
+    { "id": "e-judge-error", "from": "judge", "to": "error", "label": "模型调不通 / 不是约定格式", "variant": "security", "role": "error" },
+    { "id": "e-hit-act", "from": "hit", "to": "act-comment", "label": "要处置", "variant": "emphasis", "role": "main" },
+    { "id": "e-hit-record", "from": "hit", "to": "record", "label": "每次判定都落一条", "variant": "emphasis", "role": "main" },
+    { "id": "e-act-record", "from": "act-comment", "to": "record", "label": "动作与正文一起落", "variant": "emphasis", "role": "main" },
+    { "id": "e-record-console", "from": "record", "to": "console", "label": "人与 Agent 从这儿读", "variant": "emphasis", "role": "main" },
+    { "id": "e-console-react", "from": "console", "to": "reaction", "label": "表态", "variant": "emphasis", "role": "main" }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "三个结局，不是两个",
+      "items": [
+        "命中 / 未命中 / 判断没做成 是三态，不是布尔",
+        "「没做成」不等于通过 —— 它单独一列、单独计数",
+        "并进未命中，就等于用失败冒充通过"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "每一次判定都留痕",
+      "items": [
+        "未命中也落记录，否则「看过没问题」与「没看过」分不开",
+        "观察期的分母是「被评估了多少次」，回写是它唯一的输入",
+        "所以记录只追加，不因为改结构被丢掉"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "动作有代价，所以默认不动手",
+      "items": [
+        "写开关默认关：干燥跑走真实代码路径，只有最后一跳没跳",
+        "一次事件只动一次手，评论噪音会让人把机制静音",
+        "发出去的要能收回 —— 回滚是动作三条件里唯一曾空缺的那条"
+      ]
+    }
+  ]
+}

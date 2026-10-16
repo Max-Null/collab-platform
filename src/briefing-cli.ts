@@ -28,6 +28,8 @@ const w = wire({ root, dbPath: resolve(root, values.db), outDir: resolve(root, v
 
 const now = new Date();
 const since = new Date(now.getTime() - 24 * 3600 * 1000).toISOString();
+/** 报「最近出过事」用的窗口。7 天是个折中：短了盖不住周末，长了会把早已自愈的事翻出来。 */
+const failureWindow = new Date(now.getTime() - 7 * 24 * 3600 * 1000).toISOString();
 const lastBeat = w.store.lastHeartbeat();
 const lastJudgmentAt = w.store.lastJudgmentAt();
 
@@ -39,6 +41,10 @@ const text = renderBriefing({
   errors: w.store.listUnresolvedErrors(200),
   stats: w.store.statsByPolicyVersion(),
   last24h: w.store.countSince(since),
+  recentBeats: w.store.heartbeatsSince(failureWindow),
+  // 探针结果跟着**最后一轮心跳**走：它回答的是「常驻最近一次探的时候，那个东西还在不在」。
+  // 不单独存一份 —— 存两份就会有「哪份更新」的问题。
+  probe: lastBeat?.probe,
 });
 
 if (!text) {

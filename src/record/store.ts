@@ -148,6 +148,10 @@ export class RecordStore {
       this.db.exec('ALTER TABLE heartbeat ADD COLUMN model TEXT');
       this.db.exec('ALTER TABLE heartbeat ADD COLUMN model_configured INTEGER');
     }
+    // 探针结果（探那个地址通不通）—— 由常驻顺手探，见 types.ts 的 Heartbeat.probe
+    if (!hbNames.has('probe_json')) {
+      this.db.exec('ALTER TABLE heartbeat ADD COLUMN probe_json TEXT');
+    }
   }
 
   /** 落一条判断记录，返回自增 id */
@@ -489,8 +493,8 @@ export class RecordStore {
   saveHeartbeat(h: Heartbeat): number {
     const info = this.db
       .prepare(
-        `INSERT INTO heartbeat (at, ok, interval_ms, events, judged, skipped, duration_ms, error, model, model_configured)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO heartbeat (at, ok, interval_ms, events, judged, skipped, duration_ms, error, model, model_configured, probe_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         h.at,
@@ -503,6 +507,7 @@ export class RecordStore {
         h.error ?? null,
         h.model ?? null,
         h.modelConfigured === undefined ? null : h.modelConfigured ? 1 : 0,
+        h.probe === undefined ? null : JSON.stringify(h.probe),
       );
     return Number(info.lastInsertRowid);
   }
@@ -524,14 +529,36 @@ export class RecordStore {
         row.model_configured === null || row.model_configured === undefined
           ? undefined
           : Number(row.model_configured) === 1,
+      // 同理：老心跳里没有探针结果，那是「没探过」，不是「探了不通」
+      probe: this.mapProbe(row.probe_json),
     };
+  }
+
+  /**
+   * 探针结果是 JSON 存的。解析不出来时返回 undefined（当作「没探过」）——
+   * **不能编一个结果出来**：「不知道」与「不通」在处置上完全不同，
+   * 前者要去查为什么没探，后者要去把服务拉起来。
+   */
+  private mapProbe(raw: unknown): Heartbeat['probe'] {
+    // 没有这一列的值 = 这一轮根本没探（没配 --probe）—— 那是「没探过」，不是「不通」
+    if (raw === null || raw === undefined) return undefined;
+    try {
+      const o = JSON.parse(String(raw)) as Heartbeat['probe'];
+      if (o && typeof o.url === 'string' && typeof o.ok === 'boolean') return o;
+      return { url: '（心跳里的探针数据不完整）', ok: false, error: 'probe_json 内容不合法' };
+    } catch {
+      // ⚠️ **解析失败不能当成「没探过」。** 前者是数据坏了（要去看），后者是没配（本来就没有）——
+      // 两者处置完全不同，报成同一个就是又一次「数据在、信号不在」。
+      // 这里报成 `ok: false` 而不是宁可不说：说不通的那一次，正是最该有人去看的那次。
+      return { url: '（心跳里的探针数据解析不出来）', ok: false, error: 'probe_json 不是合法 JSON' };
+    }
   }
 
   /** 最后一次心跳。从来没有过就返回 undefined —— 那是「从没跑过」，不是「刚跑过」。 */
   lastHeartbeat(): Heartbeat | undefined {
     const row = this.db
       .prepare(
-        `SELECT at, ok, interval_ms, events, judged, skipped, duration_ms, error, model, model_configured
+        `SELECT at, ok, interval_ms, events, judged, skipped, duration_ms, error, model, model_configured, probe_json
          FROM heartbeat ORDER BY id DESC LIMIT 1`,
       )
       .get() as Record<string, unknown> | undefined;
@@ -550,13 +577,31 @@ export class RecordStore {
   recentHeartbeats(limit = 48): Heartbeat[] {
     const rows = this.db
       .prepare(
-        `SELECT at, ok, interval_ms, events, judged, skipped, duration_ms, error, model, model_configured
+        `SELECT at, ok, interval_ms, events, judged, skipped, duration_ms, error, model, model_configured, probe_json
          FROM heartbeat ORDER BY id DESC LIMIT ?`,
       )
       .all(limit) as Array<Record<string, unknown>>;
 
     // 查出来是倒序（最近的在前），翻成正序：格带从左到右是时间在推进
     return rows.reverse().map((r) => this.mapHeartbeat(r));
+  }
+
+  /**
+   * 某个时刻之后的全部心跳，**按时间正序** —— 简报回答「这段时间出过事吗」用它。
+   *
+   * 与 `recentHeartbeats` 的区别是**按时间取、不按条数取**：格带要的是「最近 48 片」，
+   * 而「昨天有没有连不上的时候」要的是时间范围 —— 48 条在 5 分钟一轮的节奏下只够 4 小时，
+   * 再早的失败滑出窗口就查不到了，而库里其实是全的。
+   */
+  heartbeatsSince(since: string): Heartbeat[] {
+    const rows = this.db
+      .prepare(
+        `SELECT at, ok, interval_ms, events, judged, skipped, duration_ms, error, model, model_configured, probe_json
+         FROM heartbeat WHERE at >= ? ORDER BY id ASC`,
+      )
+      .all(since) as Array<Record<string, unknown>>;
+
+    return rows.map((r) => this.mapHeartbeat(r));
   }
 
   /**
