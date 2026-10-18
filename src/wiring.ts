@@ -2,8 +2,10 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { CommentAction } from './action/commenter.js';
 import type { ActionRunner } from './action/commenter.js';
+import { GitHubCommentAction } from './action/github-comment.js';
 import { GitLabCommentAction } from './action/gitlab-comment.js';
 import { GitLabHoldMergeAction } from './action/hold-merge.js';
+import type { GitHubApi } from './github/api.js';
 import type { GitLabApi } from './gitlab/api.js';
 import type { LlmClient } from './llm/client.js';
 import { OpenAiCompatLlmClient } from './llm/openai-compat.js';
@@ -31,11 +33,21 @@ export interface GitLabWiring {
   write: boolean;
 }
 
+/** GitHub 侧的装配参数。语义与 GitLabWiring 一一对应，没有别的差异。 */
+export interface GitHubWiring {
+  api: GitHubApi;
+  /** `owner/repo` */
+  project: string;
+  /** 写开关，默认关。关着时只落本地文件，不发到 GitHub。 */
+  write: boolean;
+}
+
 export interface WiringOptions {
   root: string;
   dbPath: string;
   outDir: string;
   gitlab?: GitLabWiring;
+  github?: GitHubWiring;
 }
 
 export interface Wiring {
@@ -175,10 +187,23 @@ export function wire(opts: WiringOptions): Wiring {
         outDir: opts.outDir,
       }),
     );
+  } else if (opts.github) {
+    // GitHub 侧目前只有 `comment`。`hold_merge` 在 GitHub 上对应一次
+    // REQUEST_CHANGES review，接口也已经写好（见 github/api.ts 的 requestChanges），
+    // 但**还没接进行为层** —— 现有两条策略都停在级别 1，没有东西会用它。
+    // 等真有一条策略要升到级别 3 时再接，那时才知道它到底该长什么样。
+    actions.set(
+      'comment',
+      new GitHubCommentAction({
+        api: opts.github.api,
+        project: opts.github.project,
+        write: opts.github.write,
+        outDir: opts.outDir,
+      }),
+    );
   } else {
-    // 没有 GitLab 时用本地动作 —— 但**没有本地版的 hold_merge**：
+    // 没有代码托管平台时用本地动作 —— 但**没有本地版的 hold_merge**：
     // 「挂起合并」在本地无从表达，硬造一个假的会更坏（它会看起来成功）。
-    // 所以那种组合下，级别 3 的策略会走到「平台没有它的实现」那条分支并如实报出来。
     actions.set('comment', new CommentAction(opts.outDir));
   }
 

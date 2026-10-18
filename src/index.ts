@@ -13,7 +13,7 @@ import { judgeHealth } from './policy/health.js';
 import type { PipelineResult } from './types.js';
 import { describeUsage } from './usage.js';
 import { wire } from './wiring.js';
-import type { GitLabWiring } from './wiring.js';
+import type { GitHubWiring, GitLabWiring } from './wiring.js';
 
 const root = process.cwd();
 
@@ -44,6 +44,7 @@ function need(name: string): string {
 
 let source: EventSource;
 let gitlab: GitLabWiring | undefined;
+let github: GitHubWiring | undefined;
 let sourceNote: string;
 
 if (values.source === 'github' || values.source === 'github-push') {
@@ -52,6 +53,8 @@ if (values.source === 'github' || values.source === 'github-push') {
   // 所以这里也不需要 refresh —— PAT 不过期，被撤销了就该如实报错。
   const api = new GitHubApi({ token: need('GITHUB_TOKEN') });
   const project = need('GITHUB_PROJECT');
+  const write = process.env.GITHUB_WRITE === 'true';
+  github = { api, project, write };
 
   if (values.source === 'github-push') {
     const branch = process.env.GITHUB_BRANCH;
@@ -59,14 +62,22 @@ if (values.source === 'github' || values.source === 'github-push') {
       branch,
       limit: Number(process.env.GITHUB_COMMIT_LIMIT ?? 20),
     });
-    sourceNote = `github-push · ${project} · 分支 ${branch ?? '（默认分支）'} · 只读`;
+    // ⚠️ 推送事件没有 PR 号 —— 写开关开着也发不出去。这里照实说，
+    // 而不是让它在动作那一步才报错（那时人已经在看结论了）。
+    sourceNote =
+      `github-push · ${project} · 分支 ${branch ?? '（默认分支）'} · ` +
+      (write
+        ? '写开关【开】但推送没有可评论的落点，动作会如实失败'
+        : '写开关【关】（dry-run）');
   } else {
     const state = process.env.GITHUB_PR_STATE ?? 'open';
     source = new GitHubPullSource(api, project, {
       limit: Number(process.env.GITHUB_PR_LIMIT ?? 20),
       state,
     });
-    sourceNote = `github · ${project} · state=${state} · 只读`;
+    sourceNote =
+      `github · ${project} · state=${state} · ` +
+      (write ? '写开关【开】' : '写开关【关】（dry-run）');
   }
 } else if (values.source === 'gitlab' || values.source === 'gitlab-push') {
   const baseUrl = need('GITLAB_BASE_URL');
@@ -121,7 +132,7 @@ if (values.source === 'github' || values.source === 'github-push') {
 }
 
 // ── 装配（与 MCP 出口共用同一条路径）────────────────────
-const w = wire({ root, dbPath, outDir, gitlab });
+const w = wire({ root, dbPath, outDir, gitlab, github });
 
 // ── 跑 ──────────────────────────────────────────────────
 const events = await source.fetch();

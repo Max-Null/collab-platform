@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { GitHubApi } from './github/api.js';
 import { GitLabApi, fetchOAuthToken } from './gitlab/api.js';
 import { RecordStore } from './record/store.js';
 
@@ -27,6 +28,7 @@ const { values } = parseArgs({
     judgment: { type: 'string' },
     db: { type: 'string', default: 'var/platform.db' },
     apply: { type: 'boolean', default: false },
+    host: { type: 'string', default: 'gitlab' },
     // 撤销要发 DELETE，所以必须有 GitLab 凭据 —— 即使当初是干燥跑发的
     'dry-run-note': { type: 'string' },
   },
@@ -91,8 +93,24 @@ async function main(): Promise<void> {
     throw new Error(`这条动作已经在 ${row.undoneAt} 撤过了，不重复撤`);
   }
 
-  const mrIid = mrIidFromEventId(row.eventId);
-  log(`  将删除：MR !${mrIid} 上的 note ${row.externalRef}`);
+  /**
+   * 撤销哪一边。
+   *
+   * ⚠️ **GitHub 与 GitLab 在这里的机制不同，不是换个 baseUrl 就行**：
+   * GitLab 的评论是挂在 MR 上的（`DELETE /projects/:id/merge_requests/:iid/notes/:note`），
+   * 所以要先从事件 id 里还原 MR 号；GitHub 的评论有自己的 id
+   * （`DELETE /repos/:o/:r/issues/comments/:id`），**不需要 PR 号**。
+   * 硬凑成一条路径的结果是删错东西或者删不掉，而「删不掉」会让人以为「撤销过了」。
+   */
+  const isGitHub = values.host === 'github';
+
+  let mrIid: number | undefined;
+  if (isGitHub) {
+    log(`  将删除：GitHub 评论 ${row.externalRef}`);
+  } else {
+    mrIid = mrIidFromEventId(row.eventId);
+    log(`  将删除：MR !${mrIid} 上的 note ${row.externalRef}`);
+  }
 
   if (!values.apply) {
     log('');
@@ -101,27 +119,35 @@ async function main(): Promise<void> {
     return;
   }
 
-  const baseUrl = need('GITLAB_BASE_URL');
-  let api: GitLabApi;
-  const pat = process.env.GITLAB_TOKEN;
-  if (pat) {
-    api = new GitLabApi({ baseUrl, token: pat });
+  if (isGitHub) {
+    const api = new GitHubApi({ token: need('GITHUB_TOKEN') });
+    await api.deleteComment(need('GITHUB_PROJECT'), row.externalRef);
   } else {
-    const token = await fetchOAuthToken({
-      baseUrl,
-      username: need('GITLAB_USER'),
-      password: need('GITLAB_PASSWORD'),
-    });
-    api = new GitLabApi({ baseUrl, token, tokenKind: 'bearer' });
-  }
+    const baseUrl = need('GITLAB_BASE_URL');
+    let api: GitLabApi;
+    const pat = process.env.GITLAB_TOKEN;
+    if (pat) {
+      api = new GitLabApi({ baseUrl, token: pat });
+    } else {
+      const token = await fetchOAuthToken({
+        baseUrl,
+        username: need('GITLAB_USER'),
+        password: need('GITLAB_PASSWORD'),
+      });
+      api = new GitLabApi({ baseUrl, token, tokenKind: 'bearer' });
+    }
 
-  const project = need('GITLAB_PROJECT');
-  await api.deleteNote(project, mrIid, row.externalRef);
+    const project = need('GITLAB_PROJECT');
+    await api.deleteNote(project, mrIid!, row.externalRef);
+  }
 
   // 不删记录，只标时刻 —— 见文件头 ②
   store.setUndone(id, new Date().toISOString());
   log('');
-  log(`✅ 已撤销：MR !${mrIid} 的 note ${row.externalRef} 已删除，判断记录 #${id} 标为已撤销。`);
+  log(
+    `✅ 已撤销：${isGitHub ? `GitHub 评论 ${row.externalRef}` : `MR !${mrIid} 的 note ${row.externalRef}`}` +
+      ` 已删除，判断记录 #${id} 标为已撤销。`,
+  );
   log('   （记录本身保留 —— 「发出去了又收回」也是这段留痕的一部分。）');
 
   store.close();

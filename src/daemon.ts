@@ -10,7 +10,7 @@ import { GitLabApi, fetchOAuthToken } from './gitlab/api.js';
 import { runPipeline } from './pipeline.js';
 import type { Heartbeat, ProbeResult } from './types.js';
 import { wire } from './wiring.js';
-import type { GitLabWiring } from './wiring.js';
+import type { GitHubWiring, GitLabWiring } from './wiring.js';
 
 /**
  * 常驻轮询：让平台在没人敲命令的时候也在跑。
@@ -121,11 +121,13 @@ async function main(): Promise<void> {
 
   const sources: EventSource[] = [];
   let gitlabWiring: GitLabWiring | undefined;
+  let githubWiring: GitHubWiring | undefined;
   let hostNote: string;
 
   if (values.host === 'github') {
     const api = new GitHubApi({ token: need('GITHUB_TOKEN') });
     const project = need('GITHUB_PROJECT');
+    const write = process.env.GITHUB_WRITE === 'true';
 
     if (wanted.includes('mr')) {
       sources.push(
@@ -137,7 +139,10 @@ async function main(): Promise<void> {
         new GitHubPushSource(api, project, { branch: values.branch, limit: Number(values.limit) }),
       );
     }
-    hostNote = `github · ${project} · 只读（写开关还没接到 GitHub 上）`;
+    githubWiring = { api, project, write };
+    hostNote =
+      `github · ${project} · ` +
+      (write ? '写开关【开】' : '写开关【关】（干燥跑，不发任何东西到 GitHub）');
   } else if (values.host === 'gitlab') {
     const baseUrl = need('GITLAB_BASE_URL');
     const project = need('GITLAB_PROJECT');
@@ -184,7 +189,7 @@ async function main(): Promise<void> {
   }
 
   // 装配与 CLI、MCP 出口共用一条路径 —— 三个入口给出不同结论才是真问题
-  const w = wire({ root, dbPath, outDir, gitlab: gitlabWiring });
+  const w = wire({ root, dbPath, outDir, gitlab: gitlabWiring, github: githubWiring });
 
   const intervalMs = Math.max(30, Number(values.interval)) * 1000;
   let rounds = 0;
