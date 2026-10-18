@@ -382,6 +382,40 @@
     }
   }
 
+  /**
+   * 断掉 archify 那条「导航栏让位」的反馈循环。
+   *
+   * ⚠️ **这是给上游产物打的一处补丁，根因在图那边（archify 3.1.0）。**
+   * 图里有一段给底部导航栏留位置的逻辑：
+   *
+   *     var remaining = Math.max(1, SAFE_GAP - stageGap);
+   *     writeReserve(reserve + remaining);        // 把「还差多少」加到 reserve 上
+   *
+   * 它假设补过一次之后 `stageGap` 就够了，下一帧 `remaining` 该归零。
+   * 但 `.diagram-container` 在阅读区模式下是 `display:flex; align-items:center` ——
+   * 容器变高时内容跟着居中，**`stageRect.bottom` 并不会按预想往下走**，
+   * 于是 `remaining` 一直是正数，每帧再加 2068px，永远补不满。
+   *
+   * 这个 reserve 又通过 `padding-bottom: calc(.75rem + var(--archify-nav-reserve))`
+   * 撑高容器，容器再通过 `--archify-diagram-min-height` 撑高自己 —— 两条链一起放大。
+   * 实测页面高度一秒涨十几万像素，而且**一旦进入就自持**：把注入的元素全删掉也停不下来。
+   *
+   * 断法照抄 archify 自己的打印样式 —— 它在那边也是把 reserve 归零。
+   * 源图正常时 reserve 本来就是 0，所以这条钳制不会比原状更差。
+   */
+  function containRunawayHeight() {
+    const style = document.createElement('style');
+    style.className = 'live-height-clamp';
+    style.textContent = [
+      '.diagram-container{--archify-nav-reserve:0px !important}',
+      // 兜底：万一还有别的链条推这个变量，也不让它把容器撑开
+      '.diagram-container{min-height:0 !important}'
+    ].join('\n');
+    document.head.appendChild(style);
+  }
+
+  containRunawayHeight();
+
   // 应用条先挂上：它是壳，不该等数据；而且状态拉不到时，它正是「怎么回去」的那条路。
   appbar();
 
