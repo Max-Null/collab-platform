@@ -426,7 +426,18 @@
       // 右边那片空就成了一张「不知道是什么的白板」。
       //
       // 让它只包住按钮（高度 auto、贴底），白板就没有了，按钮还在原处。
-      '.diagram-nav{top:auto !important;bottom:16px !important;height:auto !important}'
+      '.diagram-nav{top:auto !important;bottom:16px !important;height:auto !important}',
+
+      // ⚠️ **图不许再给那条导轨留位置。**
+      //
+      // archify 按「容器宽 − 导轨宽 − 内边距」算出 `--archify-diagram-max-width`
+      // 并把 SVG 压到那个宽度 —— 目的是让图不压到右侧的导航导轨上。
+      // 但那条导轨在上一行已经被压成底部一条了，它还按 408px 让位，
+      // 结果就是：容器 1920、图只有 1350，右边空出 570px 谁也用不上。
+      //
+      // 放开之后图用满容器（1871），页面高度从 2088 长到 3744 —— 这是等比放大的
+      // 必然结果，也是「横着看得清」要付的代价。
+      'html[data-reader-narrow="true"] .diagram-container > svg{max-width:none !important}'
     ].join('\n');
     document.head.appendChild(style);
   }
