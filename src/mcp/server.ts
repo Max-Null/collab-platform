@@ -3,6 +3,7 @@ import { createInterface } from 'node:readline';
 import { resolve } from 'node:path';
 import type { JudgmentRecord } from '../types.js';
 import type { PipelineResult } from '../types.js';
+import { ask } from '../butler/ask.js';
 import { describeUsage, parseUsage } from '../usage.js';
 import { runPipeline } from '../pipeline.js';
 import { judgeHealth } from '../policy/health.js';
@@ -114,6 +115,25 @@ function renderPipelineResult(result: PipelineResult): string {
 
 const TOOLS: ToolDef[] = [
   {
+    name: 'ask_butler',
+    description:
+      '问管家一句话，得到一段基于记录的**人话回答**（不是一堆数据）。' +
+      '它读判断记录、心跳与观察期统计，回答里每条具体结论都带（#编号），可以直接用 get_judgment 追问。' +
+      '适用：「昨天有什么动静」「谁改得最多」「那条可疑的后来怎么样了」。' +
+      '⚠️ 记录里没有的信息（变更的动机、任务排期、谁是负责人）它会直说不知道 —— 那不是失败，是不编。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        question: { type: 'string', description: '用日常说法问，例如「昨天有什么动静」' },
+        hours: {
+          type: 'number',
+          description: '看多长时间（小时）。不填就按问题里的日期词判断（昨天=24、上周=168…）',
+        },
+      },
+      required: ['question'],
+    },
+  },
+  {
     name: 'get_usage_guide',
     description:
       '平台的使用指引（给接入的 Agent）：什么时候该找平台、三种动作分别怎么用、最容易写错的地方在哪里。第一次接入、或不确定某一步该不该做时读它。注意：它只讲用法，「有哪些工具」以 tools/list 为准 —— 不在这里重复一份。',
@@ -200,6 +220,27 @@ function str(args: Record<string, unknown>, key: string): string | undefined {
 
 async function callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
   switch (name) {
+    case 'ask_butler': {
+      const question = str(args, 'question')?.trim();
+      if (!question) return err('ask_butler 需要 question（一句话，用日常说法问）');
+
+      const rawHours = Number(args.hours);
+      const hours = Number.isFinite(rawHours) && rawHours > 0 ? rawHours : undefined;
+
+      const res = await ask(question, {
+        store: w.store,
+        llm: w.llm,
+        llmConfigured: w.llmConfigured,
+        hours,
+      });
+
+      // 拿不到就说拿不到 —— 与判断没做成时同一个判据。
+      // 组装成一句「我已看过」而其实没看，是这个出口最坏的失效形态。
+      if (!res.ok) return err(res.error ?? '这次没有回答');
+
+      return ok(res.answer ?? '');
+    }
+
     case 'get_usage_guide': {
       // 每次现读：指引是要反复改的东西，缓存一份就等于多了一个会过期的副本。
       // 两条路（这个工具 / 技能注册中心）返回的是同一份文件，不各写一份。

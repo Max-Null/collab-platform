@@ -109,6 +109,8 @@ test('协议：initialize 返回 serverInfo，tools/list 列出全部工具', as
     const list = (await s.call('tools/list')) as { result?: { tools: { name: string }[] } };
     const names = (list.result?.tools ?? []).map((t) => t.name);
     assert.deepEqual(names, [
+      // 问管家：读的是同一份判断记录，说出来的是一段人话
+      'ask_butler',
       'get_usage_guide',
       'list_judgments',
       'get_judgment',
