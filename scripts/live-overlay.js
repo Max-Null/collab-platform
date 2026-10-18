@@ -162,19 +162,24 @@
     t.textContent = note;
     dot.appendChild(t);
 
-    // 有出口就包一层链接。
+    // 有出口就让它可点。
     // **「有东西在等人」而不给一条走到人那里的路，这个标记就只是把话说了一半** ——
     // 读的人知道了有事，但还是得自己回控制台、自己找到那一页。
+    //
+    // ⚠️ 这里**不用 SVG 的 `<a>` 包一层**：实测那样点不动 —— 点到的是里面的
+    // `<circle>`，而 SVG 里 `<a>` 的默认导航行为在脚本层面并不可靠
+    // （Playwright 直接报「subtree intercepts pointer events」，真人也一样点不上）。
+    // 挂一个 click 处理器，行为是确定的。
     if (href) {
-      const a = document.createElementNS(NS, 'a');
-      a.setAttribute('href', href);
-      a.setAttribute('target', '_self');
-      a.setAttribute('class', 'live-jumpable');
-      a.appendChild(dot);
-      g.appendChild(a);
-    } else {
-      g.appendChild(dot);
+      dot.setAttribute('class', dot.getAttribute('class') + ' live-jumpable');
+      dot.style.cursor = 'pointer';
+      dot.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        location.href = href;
+      });
     }
+    g.appendChild(dot);
 
     // 同时挂到节点自己的 title 上：悬停整张卡片时也能看见，不用正好指到那个点
     const title = g.querySelector('title');
@@ -218,16 +223,18 @@
     }
 
     // —— 最近出过事：连片失败（格带只铺 4 小时，这类事早滑出去了）——
+    // ⚠️ 这里**不给链接**。控制台里没有一件东西能回答「哪几段失败过」——
+    // 它只在简报和心跳表里。按这个仓库的判据：假出口比没有出口更坏，
+    // 而一个点了没反应的链接，会让人以为「点开也没有」，而不是「它没地方去」。
     if (ov.failures) {
       const f = ov.failures;
       marks.push({
         node: 'poll',
         level: 'warn',
-        href: '/#failures',
         note:
           '最近 7 天连着失败过 ' + f.longestRun + ' 轮（共 ' + f.failed + '/' + f.total + ' 轮失败）' +
           (f.commonError ? '，多数是 ' + f.commonError : '') +
-          '，点它看每一段的时刻与错误原文',
+          ' —— 每一段的时刻与错误原文在简报里（npm run brief）',
       });
     }
 
@@ -244,7 +251,8 @@
       marks.push({
         node: 'error',
         level: 'bad',
-        note: errs + ' 次判断没做成 —— 不是「没问题」，是这一路判断没有真的发生',
+        href: '/?only=error',
+        note: errs + ' 次判断没做成 —— 不是「没问题」，是这一路判断没有真的发生。点它看是哪几次',
       });
       marks.push({ node: 'judge', level: 'warn', note: '有 ' + errs + ' 次判定落成「没做成」' });
     }
@@ -258,7 +266,7 @@
       marks.push({
         node: 'reaction',
         level: 'warn',
-        href: '/#todo',
+        href: '/?only=pending',
         note:
           ov.pendingCount +
           ' 条还没回写 —— 观察期的分母就靠它，点这个点直接去处理',
@@ -268,6 +276,7 @@
       marks.push({
         node: 'error',
         level: 'bad',
+        href: '/?only=error',
         note: '另有 ' + ov.errorPendingCount + ' 次没做成的判断还没被回应',
       });
     }
@@ -281,22 +290,19 @@
         marks.push({
           node: 'daemon',
           level: 'bad',
-          href: '/#status',
-          note: '常驻没在跑 —— 整台机器里没有东西在转，点它看最后一次心跳是什么时候',
+          note: '常驻没在跑 —— 整台机器里没有东西在转。最后一次心跳是 ' + (d.last ? ago(d.last.at) : '从来没有'),
         });
       } else if (d.status === 'late') {
         marks.push({
           node: 'daemon',
           level: 'warn',
-          href: '/#status',
-          note: '常驻迟了 —— 已经在漏轮次，点它看格带上是哪几片空了',
+          note: '常驻迟了 —— 已经在漏轮次',
         });
       } else if (ov.failures) {
         marks.push({
           node: 'daemon',
           level: 'warn',
-          href: '/#failures',
-          note: '在跑，但最近 7 天连着失败过 ' + ov.failures.longestRun + ' 轮 —— 点它看是哪几段',
+          note: '在跑，但最近 7 天连着失败过 ' + ov.failures.longestRun + ' 轮',
         });
       }
 
@@ -304,6 +310,7 @@
         marks.push({
           node: 'policies',
           level: 'bad',
+          href: '/?only=error',
           note: errs + ' 次判定落成「没做成」—— 那一路判断没有真的发生',
         });
       }
@@ -312,7 +319,7 @@
         marks.push({
           node: 'human',
           level: 'warn',
-          href: '/#todo',
+          href: '/?only=pending',
           note: '有 ' + ov.pendingCount + ' 条在等你回写 —— 这个环就断在这儿，点它去处理',
         });
         marks.push({ node: 'briefing', level: 'warn', note: '今天有内容要说' });

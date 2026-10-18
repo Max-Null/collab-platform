@@ -283,6 +283,11 @@
 <main>
   <div id="banner"></div>
 
+  <!-- 从图上点过来时的筛选条。它必须自己说明「你在看的是一个子集」——
+       否则人会把「筛出来的 2 件」读成「一共就这 2 件」，而那正是
+       这个平台全篇在防的那类静默失真。 -->
+  <div id="filterBar"></div>
+
   <!-- ═══════════ 导览：她替你先看一遍 ═══════════ -->
   <section id="tourSec" hidden>
     <div class="tourbar" id="tourBar"></div>
@@ -415,6 +420,25 @@ function ago(iso) {
 const OUTCOME_LABEL = { hit: '命中', miss: '未命中', error: '判断没做成' };
 const OUTCOME_CLASS = { hit: 'h', miss: '', error: 'e' };
 const KIND_LABEL = { mr: 'MR', push: '推送' };
+
+/**
+ * `?only=` —— 从链路图上点过来时带的那一类。
+ *
+ * 图上的「5 次判断没做成」「3 条还没回写」本来就是**按类**说的，
+ * 所以在控制台这边也必须能按类落下来。否则那个点就是个假出口：
+ * 点进来是一屏全部，人还得自己找刚才图上的那几条。
+ */
+const ONLY = new URLSearchParams(location.search).get('only');
+const ONLY_TEXT = {
+  error: '这次没看成',
+  hit: '看着可疑',
+  pending: '等你表态的',
+};
+const ONLY_NOTE = {
+  error: '判断没做成 —— 不是「没问题」，是这一路判断没有真的发生',
+  hit: '策略报了问题，等你拿主意',
+  pending: '命中了或者没做成、而还没有人表过态的',
+};
 
 /**
  * 一条判定的说明文本。
@@ -598,12 +622,35 @@ async function loadTour() {
   }
 }
 
+/* ── 渲染：筛选条 ─────────────────────────────────────────────
+   从链路图上点过来时，把「你在看的是子集」这件事说在最前面。
+   不说的话，「2 件」会被读成「一共 2 件」—— 而那正是这个平台
+   全篇在防的失真：一个数字看着正常，其实它只覆盖了一部分。 */
+function renderFilterBar() {
+  const el = document.getElementById('filterBar');
+  if (!ONLY) {
+    el.innerHTML = '';
+    return;
+  }
+  el.innerHTML = `<div class="banner info" style="margin-bottom:14px">
+    你从链路上点了「<b>${esc(ONLY_TEXT[ONLY] || ONLY)}</b>」——
+    ${esc(ONLY_NOTE[ONLY] || '')}。这一屏只显示这一类，<a href="/">看全部</a>。
+  </div>`;
+}
+
 /* ── 渲染：项目 ───────────────────────────────────────────────
    一块一个项目。三样东西按重要性排：名字、要你管几件、变更条。
    其余（命中/没做成/未命中的明细）缩到脚注 —— 需要时才看。 */
 function renderProjects(view) {
   const box = document.getElementById('projects');
   const changes = view.changes || [];
+
+  // 筛着的时候整块不出现：它的数字是**全量**的（「要你管 2 件」），
+  // 而下面筛出来的是 1 件 —— 两个数字在同一屏上打架，读的人只会以为哪儿算错了。
+  if (ONLY) {
+    box.innerHTML = '';
+    return;
+  }
 
   if (!view.projects || view.projects.length === 0) {
     box.innerHTML = `<div class="proj alive" style="flex-basis:100%;border-top-color:var(--void)">
@@ -661,17 +708,32 @@ function renderProjects(view) {
    压住一件刚刚发生的事 —— 那个顺序没有人在读得懂的地方。 */
 function renderAttention(view) {
   const list = document.getElementById('attnList');
-  const need = (view.changes || []).filter((c) => c.pending > 0);
+
+  // 从图上来的时候按类筛；否则就是「所有等你表态的」
+  let need;
+  if (ONLY === 'error') need = (view.changes || []).filter((c) => c.verdict === 'error');
+  else if (ONLY === 'hit') need = (view.changes || []).filter((c) => c.verdict === 'hit');
+  else need = (view.changes || []).filter((c) => c.pending > 0);
 
   document.getElementById('attnN').textContent = need.length ? `${need.length} 件` : '';
+  // 筛着的时候，标题要说清筛的是什么 —— 不然「2 件」会被读成「一共 2 件」
+  const headEl = document.querySelector('#attentionSec > h2');
+  if (headEl && headEl.firstChild && headEl.firstChild.nodeType === 3) {
+    headEl.firstChild.nodeValue = ONLY ? '只看：' + (ONLY_TEXT[ONLY] || ONLY) + ' ' : '要你管的 ';
+  }
 
   if (need.length === 0) {
     list.innerHTML = `<div class="banner quiet" style="margin:0">
-      <b>没有要你拿主意的。</b>${
-        view.judgedChanges > 0
-          ? `最近 ${view.judgedChanges} 次变更里，策略没报出问题、也没有判断没做成。` +
-            `<br>⚠️ 这不等于项目干净 —— 它只等于<b>这两条策略</b>在这几次变更上没看出问题。`
-          : `还没有变更被判定过。`
+      ${
+        ONLY
+          ? `<b>这一类里现在没有。</b>你从链路上点了「${esc(ONLY_TEXT[ONLY] || ONLY)}」过来 ——
+             它指的是那一类判定，而现在这一类是空的。<a href="/">看全部</a>`
+          : `<b>没有要你拿主意的。</b>${
+              view.judgedChanges > 0
+                ? `最近 ${view.judgedChanges} 次变更里，策略没报出问题、也没有判断没做成。` +
+                  `<br>⚠️ 这不等于项目干净 —— 它只等于<b>这两条策略</b>在这几次变更上没看出问题。`
+                : `还没有变更被判定过。`
+            }`
       }
     </div>`;
     return;
@@ -751,10 +813,15 @@ function renderRest(view) {
   // 这里的轴是**时间**，不是紧急度 —— 与「要你管的」正好相反，而这是刻意的：
   // 「要你管的」回答「先处理哪件」，其余回答「最近发生过什么」。
   // 一根时间轴被压成紧急度顺序，读者就再也读不出「这几天它都在动」这件事。
-  const rest = (view.changes || [])
-    .filter((c) => c.pending === 0)
-    .slice()
-    .sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt));
+  //
+  // ⚠️ 从链路上筛过来时不显示这一块：人是带着「看这一类」的意图进来的，
+  // 把二十条无关的摊在下面，等于让他再筛一遍。
+  const rest = ONLY
+    ? []
+    : (view.changes || [])
+        .filter((c) => c.pending === 0)
+        .slice()
+        .sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt));
   const btn = document.getElementById('restToggle');
 
   document.getElementById('restSec').hidden = rest.length === 0;
@@ -976,6 +1043,7 @@ async function load() {
 
   renderLive(pv);
   renderBanner(pv);
+  renderFilterBar();
   renderProjects(pv);
   renderAttention(pv);
   renderRest(pv);
@@ -984,7 +1052,8 @@ async function load() {
 
   // 导览**只在她第一次打开时生成一次**：表态之后 load() 会重跑，
   // 每次重跑都问一遍模型，等于为同一个问题反复付钱，而且答案还会飘。
-  if (!TOUR_STARTED) {
+  // 筛着的时候不生成 —— 导览讲的是「全貌」，而人在看的是一类。
+  if (!TOUR_STARTED && !ONLY) {
     TOUR_STARTED = true;
     loadTour();
   }
