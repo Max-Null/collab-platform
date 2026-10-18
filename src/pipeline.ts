@@ -113,6 +113,15 @@ export async function runPipeline(
 
     deps.store.save({
       eventId: event.id,
+      // 事件快照。它是「事后按项目看」的全部依据 —— MR 标题会被改、分支会被删，
+      // 事件源也不会回放同一份 payload，所以判的时候就得抄下来。
+      project: event.project,
+      author: event.author,
+      title: event.title,
+      eventKind: event.kind,
+      changedFiles: event.changedFiles,
+      sha: event.sha,
+      mrIid: event.mrIid,
       policyId: verdict.policyId,
       policyVersion: verdict.policyVersion,
       outcome: verdict.outcome,

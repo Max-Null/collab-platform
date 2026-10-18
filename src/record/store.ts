@@ -1,12 +1,55 @@
 import { DatabaseSync } from 'node:sqlite';
 import type {
+  ChangeGroup,
   Heartbeat,
   JudgmentOrigin,
   JudgmentRecord,
   PolicyVersionStats,
+  ProjectSummary,
   Reaction,
   VerdictOutcome,
 } from '../types.js';
+
+/**
+ * `changed_files_json` 那一列 → 文件路径数组。
+ *
+ * 坏数据**不抛**，当成「没记下来」：它与 `changedFilesOf` 同一个理由 ——
+ * 一个损坏的字段不该让整个项目视图打不开。但两者语义不同，别混用：
+ * `changedFilesOf` 是**从依据里反推**（老记录只能用这个），
+ * 这里是**事件快照本身**（新记录直接读）。
+ */
+function parseFiles(raw: unknown): string[] | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  try {
+    const arr: unknown = JSON.parse(String(raw));
+    if (!Array.isArray(arr)) return undefined;
+    return arr.filter((x): x is string => typeof x === 'string');
+  } catch {
+    return undefined;
+  }
+}
+
+function strOrUndef(v: unknown): string | undefined {
+  return v === null || v === undefined ? undefined : String(v);
+}
+
+/**
+ * 一次变更的紧急度 —— 项目视图排序用。**这个函数就是那张列表的说明**。
+ *
+ * 0 判断没做成、且没人表过态 —— 最急。它不是「有问题」，是「这次没看」，
+ *   而它下一秒就会滑进「以为看过了」的那一类。
+ * 1 命中了、且没人表过态 —— 有人要拿主意。
+ * 2 判断没做成、已经表过态 —— 处理过了，但结论本身仍然不可用。
+ * 3 命中了、已经表过态 —— 处理过了。
+ * 4 未命中 —— 「看过，没问题」。它照样要留在列表里（否则就分不出
+ *   「看过没问题」和「没看过」），但它不该抢在需要人动手的前面。
+ */
+function urgencyOf(g: ChangeGroup): number {
+  if (g.pending > 0) return g.verdict === 'error' ? 0 : 1;
+  if (g.verdict === 'error') return 2;
+  if (g.verdict === 'hit') return 3;
+  return 4;
+}
 
 /**
  * 从 evidence_json 里取出所有 `changed_file` 指向的文件路径。
@@ -122,6 +165,30 @@ export class RecordStore {
       this.db.exec('ALTER TABLE judgment ADD COLUMN precondition TEXT');
     }
 
+    // 事件快照 —— 项目视图要靠它。
+    //
+    // 此前判断记录只记「谁判了什么」，不记「判的是谁的哪次变更」，于是库里
+    // 账本的主语是**策略**（按 policy 组织），而管理员要问的是**项目**
+    // （我的几个仓库各是什么状况）。两者不是同一张账本，界面再换也变不出来。
+    //
+    // ⚠️ 老记录这几列是 NULL，界面上聚成「未记录」一桶并明说 —— 不能拿
+    // 现在的配置回填，那会把「当时没记」写成「当时记了是这些」。
+    for (const [col, type] of [
+      ['project', 'TEXT'],
+      ['author', 'TEXT'],
+      ['title', 'TEXT'],
+      ['event_kind', 'TEXT'],
+      ['changed_files_json', 'TEXT'],
+      ['sha', 'TEXT'],
+      ['mr_iid', 'INTEGER'],
+    ] as const) {
+      if (!names.has(col)) {
+        this.db.exec(`ALTER TABLE judgment ADD COLUMN ${col} ${type}`);
+      }
+    }
+    // 项目视图按 event 聚合、按项目筛，两个索引各建一份。
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_judgment_project ON judgment(project, created_at)');
+
     // 模型用量。它回答的是「这次判断花了多少、在什么模式下判的」——
     // 而那两个答案**随配置变**：事后再去查环境变量，读到的是"现在的配置"，
     // 不是那一次生效的那份。存 JSON 而不是为每个字段开列：各家的 usage
@@ -159,8 +226,9 @@ export class RecordStore {
     const stmt = this.db.prepare(`
       INSERT INTO judgment
         (event_id, policy_id, policy_version, outcome, reason, precondition, evidence_json, usage_json,
-         action, action_level, external_ref, origin, created_at, reaction, reaction_note, reacted_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         action, action_level, external_ref, origin, created_at, reaction, reaction_note, reacted_at,
+         project, author, title, event_kind, changed_files_json, sha, mr_iid)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const info = stmt.run(
       r.eventId,
@@ -179,6 +247,13 @@ export class RecordStore {
       r.reaction ?? null,
       r.reactionNote ?? null,
       r.reactedAt ?? null,
+      r.project ?? null,
+      r.author ?? null,
+      r.title ?? null,
+      r.eventKind ?? null,
+      r.changedFiles === undefined ? null : JSON.stringify(r.changedFiles),
+      r.sha ?? null,
+      r.mrIid ?? null,
     );
     return Number(info.lastInsertRowid);
   }
@@ -350,7 +425,8 @@ export class RecordStore {
       .prepare(
         `SELECT id, event_id, policy_id, policy_version, outcome, reason, precondition, evidence_json, usage_json,
                 action, action_level, external_ref, undone_at,
-                origin, created_at, reaction, reaction_note, reacted_at
+                origin, created_at, reaction, reaction_note, reacted_at,
+                project, author, title, event_kind, changed_files_json, sha, mr_iid
          FROM judgment ${where} ORDER BY id DESC LIMIT ?`,
       )
       .all(...params, limit) as Array<Record<string, unknown>>;
@@ -358,6 +434,16 @@ export class RecordStore {
     return rows.map((row) => ({
       id: Number(row.id),
       eventId: String(row.event_id),
+      project: row.project === null || row.project === undefined ? undefined : String(row.project),
+      author: row.author === null || row.author === undefined ? undefined : String(row.author),
+      title: row.title === null || row.title === undefined ? undefined : String(row.title),
+      eventKind:
+        row.event_kind === null || row.event_kind === undefined
+          ? undefined
+          : (String(row.event_kind) as 'mr' | 'push'),
+      changedFiles: parseFiles(row.changed_files_json),
+      sha: row.sha === null || row.sha === undefined ? undefined : String(row.sha),
+      mrIid: row.mr_iid === null || row.mr_iid === undefined ? undefined : Number(row.mr_iid),
       policyId: String(row.policy_id),
       policyVersion: String(row.policy_version),
       outcome: String(row.outcome) as VerdictOutcome,
@@ -412,6 +498,165 @@ export class RecordStore {
 
   findById(id: number): JudgmentRecord | undefined {
     return this.query('WHERE id = ?', [id], 1)[0];
+  }
+
+  /**
+   * 最近的若干次**变更**（按 event 聚合）—— 项目视图的第一层。
+   *
+   * 判断记录的单元是「事件 × 策略」，一个事件几条策略就有几条记录。而人脑子里
+   * 的一次变更只有一件：他打开控制台问的是「我的仓库里有几件事在动、哪件要我管」，
+   * 不是「两条策略各判了多少次」。所以这里先聚回去，再由界面决定展开到多细。
+   *
+   * 排序按**紧急度**而不是时间 —— 这是这个视图与「判断记录列表」的根本区别：
+   * 列表按时间回答「发生了什么」，这里按紧急度回答「**先看哪一件**」。
+   * 顺一个时间序给管理员，等于让他自己把这屏重新排一遍。
+   */
+  listChanges(limit = 50): ChangeGroup[] {
+    // 先按事件取最近的一批，再把这批事件的全部判定取回来。
+    // 不能直接按判定条数截断：那样同一个事件的几条策略会在边界上被切开，
+    // 于是「这次变更的定论」会依据残缺的一组判定算出来 —— 而它看起来完全正常。
+    const events = this.db
+      .prepare(
+        `SELECT event_id, MAX(created_at) AS last_at
+         FROM judgment WHERE origin = 'effective'
+         GROUP BY event_id ORDER BY last_at DESC LIMIT ?`,
+      )
+      .all(limit) as Array<{ event_id: string; last_at: string }>;
+
+    if (events.length === 0) return [];
+
+    const holes = events.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(
+        `SELECT id, event_id, policy_id, policy_version, outcome, reason, precondition, evidence_json,
+                reaction, reaction_note, created_at,
+                project, author, title, event_kind, changed_files_json, sha, mr_iid
+         FROM judgment WHERE origin = 'effective' AND event_id IN (${holes})
+         ORDER BY id ASC`,
+      )
+      .all(...events.map((e) => e.event_id)) as Array<Record<string, unknown>>;
+
+    const groups = new Map<string, ChangeGroup>();
+
+    for (const row of rows) {
+      const eventId = String(row.event_id);
+      let g = groups.get(eventId);
+
+      if (!g) {
+        g = {
+          eventId,
+          project: strOrUndef(row.project),
+          author: strOrUndef(row.author),
+          title: strOrUndef(row.title),
+          eventKind: row.event_kind == null ? undefined : (String(row.event_kind) as 'mr' | 'push'),
+          changedFiles: parseFiles(row.changed_files_json),
+          sha: strOrUndef(row.sha),
+          mrIid: row.mr_iid == null ? undefined : Number(row.mr_iid),
+          firstSeenAt: String(row.created_at),
+          lastSeenAt: String(row.created_at),
+          judgments: [],
+          verdict: 'miss',
+          pending: 0,
+        };
+        groups.set(eventId, g);
+      }
+
+      const outcome = String(row.outcome) as VerdictOutcome;
+      const reaction = row.reaction == null ? undefined : (String(row.reaction) as Reaction);
+
+      g.judgments.push({
+        id: Number(row.id),
+        policyId: String(row.policy_id),
+        policyVersion: String(row.policy_version),
+        outcome,
+        reason: strOrUndef(row.reason),
+        precondition: strOrUndef(row.precondition),
+        evidenceJson: String(row.evidence_json),
+        reaction,
+        reactionNote: strOrUndef(row.reaction_note),
+      });
+
+      const at = String(row.created_at);
+      if (at < g.firstSeenAt) g.firstSeenAt = at;
+      if (at > g.lastSeenAt) g.lastSeenAt = at;
+
+      // 定论取**最严**的那一态，不取多数：两条策略一条「没问题」一条「没看成」，
+      // 这次变更的答案就是「没看成」。多数票会把一个失败投掉，而失败是这个
+      // 平台唯一不能丢的东西。
+      if (outcome === 'error') g.verdict = 'error';
+      else if (outcome === 'hit' && g.verdict !== 'error') g.verdict = 'hit';
+
+      // 待表态的口径与 listPendingReactions 保持一致：命中与没做成要人表态，
+      // 未命中是「看过没问题」，它没有主张需要人确认。
+      if (reaction === undefined && (outcome === 'hit' || outcome === 'error')) g.pending += 1;
+    }
+
+    return [...groups.values()].sort((a, b) => {
+      const ua = urgencyOf(a);
+      const ub = urgencyOf(b);
+      if (ua !== ub) return ua - ub;
+      return b.lastSeenAt.localeCompare(a.lastSeenAt);
+    });
+  }
+
+  /**
+   * 按项目汇总 —— 控制台第一屏的那排「工位」。
+   *
+   * ⚠️ 老记录没有 `project` 列，它们聚在空字符串这个桶里。界面必须把这一桶
+   * **明说成「未记录」**，而不是让它冒充一个项目、或者干脆不显示：
+   * 前者会造出一个不存在的仓库，后者会让「有变更但不知道属于谁」这件事实
+   * 静默消失 —— 那正是这个平台在防的东西。
+   */
+  projectSummaries(): ProjectSummary[] {
+    const rows = this.db
+      .prepare(
+        `SELECT COALESCE(project, '') AS project,
+                COUNT(DISTINCT event_id) AS changes,
+                SUM(CASE WHEN outcome = 'hit' THEN 1 ELSE 0 END) AS hit,
+                SUM(CASE WHEN outcome = 'error' THEN 1 ELSE 0 END) AS error,
+                SUM(CASE WHEN outcome = 'miss' THEN 1 ELSE 0 END) AS miss,
+                MAX(created_at) AS last_at
+         FROM judgment WHERE origin = 'effective'
+         GROUP BY COALESCE(project, '')`,
+      )
+      .all() as Array<Record<string, unknown>>;
+
+    // 「要人管」按**变更**数，不按判定条数：一次变更两条策略都命中，
+    // 对管理员仍然是「这一件事要管」，不是两件。
+    const attention = this.db
+      .prepare(
+        `SELECT project, event_id FROM judgment
+         WHERE origin = 'effective' AND reaction IS NULL AND outcome IN ('hit', 'error')
+         GROUP BY project, event_id`,
+      )
+      .all() as Array<{ project: string | null; event_id: string }>;
+
+    const attentionBy = new Map<string, number>();
+    for (const a of attention) {
+      const key = a.project ?? '';
+      attentionBy.set(key, (attentionBy.get(key) ?? 0) + 1);
+    }
+
+    return rows
+      .map((row) => {
+        const project = String(row.project);
+        return {
+          project,
+          changes: Number(row.changes),
+          needAttention: attentionBy.get(project) ?? 0,
+          hit: Number(row.hit),
+          error: Number(row.error),
+          miss: Number(row.miss),
+          lastActivityAt: strOrUndef(row.last_at),
+        };
+      })
+      .sort((a, b) => {
+        // 要人管的排前面，其次按最近活动。
+        if ((a.needAttention > 0) !== (b.needAttention > 0)) {
+          return a.needAttention > 0 ? -1 : 1;
+        }
+        return (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? '');
+      });
   }
 
   /**

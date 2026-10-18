@@ -264,6 +264,27 @@ export interface JudgmentRecord {
   id?: number;
   /** 请求标识：事件 id */
   eventId: string;
+
+  /**
+   * 事件快照：这次判定是对**哪一次变更**做的。
+   *
+   * 这几个字段从事件原样抄下来，不参与判断，只服务于「事后按项目看」。
+   * 没有它们，判断记录只能回答「哪条策略判了多少次」，回答不了
+   * 「我的几个仓库现在各是什么状况」—— 而后者才是管理员打开控制台要问的。
+   *
+   * ⚠️ 它们是**快照，不是外键**：MR 标题随时会被改、分支会被删、事件源
+   * 不会回放同一份 payload。要能回答「当时那次变更长什么样」，只能存下来。
+   * 老记录的这几列是空的 —— 那时没存，不能假装当时存过。
+   */
+  project?: string;
+  author?: string;
+  title?: string;
+  /** 事件形态。push 没有 mrIid —— 它决定「能不能把话说出去」 */
+  eventKind?: 'mr' | 'push';
+  changedFiles?: string[];
+  sha?: string;
+  mrIid?: number;
+
   /** 策略约束：哪条策略、哪个版本 */
   policyId: string;
   policyVersion: string;
@@ -308,6 +329,70 @@ export interface JudgmentRecord {
 
 /** 一条判断的来源。影子判定不进观察期统计（见设计 §3.8）。 */
 export type JudgmentOrigin = 'effective' | 'shadow';
+
+/**
+ * 一次变更在记录里的聚合视图 —— 项目视图的**基本单元**。
+ *
+ * 判断记录的单元是「事件 × 策略」，一个事件几条策略就有几条记录。
+ * 而管理员脑子里的一次变更只有一件，他不会按策略切开来理解自己仓库里
+ * 正在发生的事。所以界面必须先把它聚回去，且**聚合后仍要能展开到逐条判定**
+ * （不是把细节藏起来，是把它们放到第二层）。
+ */
+export interface ChangeGroup {
+  eventId: string;
+  /** 事件快照。老记录没有它们 —— 那是「当时没记」，不是「没有项目」 */
+  project?: string;
+  author?: string;
+  title?: string;
+  eventKind?: 'mr' | 'push';
+  changedFiles?: string[];
+  sha?: string;
+  mrIid?: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  /** 这次变更上的每一条判定，按策略 */
+  judgments: Array<{
+    id: number;
+    policyId: string;
+    policyVersion: string;
+    outcome: VerdictOutcome;
+    reason?: string;
+    precondition?: string;
+    evidenceJson: string;
+    reaction?: Reaction;
+    reactionNote?: string;
+  }>;
+  /**
+   * 这次变更的整体定论。
+   *
+   * ⚠️ **取最严的那一态，不取多数、也不取平均**：`error` > `hit` > `miss`。
+   * 两条策略一条说「没问题」一条说「我没看成」，这次变更的答案就是
+   * 「没看成」—— 用多数票会把一个失败投掉，而失败正是这里唯一不能丢的东西。
+   * （与管道「处置只取严不取松」是同一条判据，只是对象换成了变更。）
+   */
+  verdict: VerdictOutcome;
+  /** 其中还有几条在等人表态 */
+  pending: number;
+}
+
+/**
+ * 一个项目的概况。**这是管理员打开控制台要看的第一层。**
+ *
+ * 之前控制台回答的全是「平台自己怎么样」（心跳、四段计数、策略命中率），
+ * 那些是运维视角。项目视角的第一句应当是「你的几个仓库现在各是什么状况」。
+ */
+export interface ProjectSummary {
+  /** 项目标识。老记录里没有它，聚成一个「未记录」桶并明说 */
+  project: string;
+  /** 见过的变更数（按 event 去重，不是判定条数） */
+  changes: number;
+  /** 需要人处理的变更数：含未表态的 `hit` 与 `error` */
+  needAttention: number;
+  hit: number;
+  error: number;
+  miss: number;
+  lastActivityAt?: string;
+}
 
 /**
  * 一条策略的观察期统计。
