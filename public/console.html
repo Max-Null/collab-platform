@@ -310,6 +310,7 @@
     <div class="tabs">
       <button data-pane="watch" class="on">策略观察 <span class="cnt" id="tabWatchN"></span></button>
       <button data-pane="log">判断记录 <span class="cnt" id="tabLogN"></span></button>
+      <button data-pane="map">平台链路</button>
     </div>
     <div class="pane on" id="pane-watch">
       <p class="empty" id="watchEmpty" hidden></p>
@@ -317,6 +318,12 @@
     </div>
     <div class="pane" id="pane-log">
       <div id="logList"></div>
+    </div>
+    <!-- 结构与此刻状态的叠加：一次变更在这个平台里怎么走，哪一步现在卡着。
+         ⚠️ 懒加载 —— 那张图是 830KB，打开控制台就拉一遍太贵，而多数人
+         第一屏要看的是「有没有事」，不是「系统怎么搭的」。 -->
+    <div class="pane" id="pane-map">
+      <div id="mapBox"></div>
     </div>
   </section>
 
@@ -933,8 +940,27 @@ document.querySelectorAll('.tabs button').forEach((b) => {
     document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('on', x === b));
     document.querySelectorAll('.pane').forEach((p) =>
       p.classList.toggle('on', p.id === 'pane-' + b.dataset.pane));
+
+    // 链路图第一点开才去拉 —— 它 830KB，不该是打开控制台的固定成本
+    if (b.dataset.pane === 'map') loadMap();
   };
 });
+
+/**
+ * 平台链路图 —— 结构与此刻状态的叠加。
+ *
+ * 它回答的是另一种问题：不是「哪次变更有事」，而是「**这个平台由哪几步组成、
+ * 哪一步现在卡着**」。两种都要，但不能挤在同一屏 —— 一个是待办，一个是地图。
+ */
+function loadMap() {
+  const box = document.getElementById('mapBox');
+  if (!box || box.dataset.loaded) return;
+  box.dataset.loaded = '1';
+  box.innerHTML =
+    '<iframe src="/diagram" title="平台链路 · 一次变更的生命周期" ' +
+    'style="width:100%;height:78vh;min-height:520px;border:1px solid var(--line);' +
+    'border-radius:11px;background:#fff;display:block"></iframe>';
+}
 
 /* ── 装配 ─────────────────────────────────────────────────── */
 let TOUR_STARTED = false;
