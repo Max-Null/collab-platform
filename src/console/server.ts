@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { buildOverview } from './overview.js';
 import { failureRuns } from '../heartbeat.js';
+import { judgeHealth } from '../policy/health.js';
 import { parseUsage } from '../usage.js';
 import { wire } from '../wiring.js';
 import type { Reaction } from '../types.js';
@@ -79,6 +80,15 @@ function shape(r: ReturnType<typeof w.store.listRecent>[number]) {
   return {
     id: r.id,
     eventId: r.eventId,
+    // 事件快照 —— 让每一条判定都能自己说明「判的是谁的哪次变更」。
+    // 老记录这里是 null：那时没记，如实给 null，不拿现在的配置去补。
+    project: r.project ?? null,
+    author: r.author ?? null,
+    title: r.title ?? null,
+    eventKind: r.eventKind ?? null,
+    changedFiles: r.changedFiles ?? null,
+    sha: r.sha ?? null,
+    mrIid: r.mrIid ?? null,
     policyId: r.policyId,
     policyVersion: r.policyVersion,
     outcome: r.outcome,
@@ -142,6 +152,60 @@ function handle(req: IncomingMessage, res: ServerResponse, url: URL): void {
     // 组装逻辑在 console/overview.ts：活点地图的静态快照也要同一份。
     // 两处各写一遍的话，界面上的数字与图上的标记迟早会对不上 —— 而那种不一致不会报错。
     return json(res, buildOverview(w, dbPath));
+  }
+
+  /**
+   * 项目视图 —— 控制台第一屏要的那份数据。
+   *
+   * 与 `/api/overview` 的差别是**主语**，不是数据量：那边回答「平台自己怎么样」
+   * （心跳、四段计数、策略命中率），这边回答「我的项目现在怎么样」。两个都要，
+   * 但不能挤在同一屏 —— 挤在一起的结果是管理员得先学会运维概念，才看得懂自己的项目。
+   */
+  if (path === '/api/project-view') {
+    const ov = buildOverview(w, dbPath) as {
+      daemon: { status: string; note: string };
+      model: { name: string; model: string; configured: boolean };
+    };
+
+    const changes = w.store.listChanges(60);
+    const projects = w.store.projectSummaries();
+    const judgedChanges = projects.reduce((n, p) => n + p.changes, 0);
+
+    /**
+     * 「这份数据现在代表什么」—— 四种状态，四件不同的事。
+     *
+     * 这是这个平台全篇的靶子，落到它自己的第一屏上：
+     * - `live`         常驻在跑，列表反映的是此刻
+     * - `stale`        **有数据，但没人在看**。底下全是历史 —— 而它看起来
+     *                  与「最近真的没有变更」一模一样，这正是最危险的那一种
+     * - `never-judged` 一条都没判过：还没接上，不是「项目干净」
+     * - `idle`         在看着，但还没有变更进来
+     *
+     * ⚠️ `stale` 单独成态，而不是并进「有数据就正常」—— 一个停了三天的平台，
+     * 它的列表与一个正在跑的平台长得完全一样，只有这个字段能把它们分开。
+     */
+    const alive = ov.daemon.status === 'alive';
+    const viewState =
+      changes.length > 0
+        ? alive
+          ? 'live'
+          : 'stale'
+        : judgedChanges === 0
+          ? alive
+            ? 'idle'
+            : 'never-judged'
+          : 'stale';
+
+    return json(res, {
+      projects,
+      changes,
+      /** 列出来的与全量的差别 —— 界面上要能说清「这是最近 60 次」 */
+      shown: changes.length,
+      judgedChanges,
+      viewState,
+      daemon: ov.daemon,
+      model: ov.model,
+    });
   }
 
   /**
@@ -217,7 +281,23 @@ function handle(req: IncomingMessage, res: ServerResponse, url: URL): void {
   }
 
   if (path === '/api/stats') {
-    return json(res, { stats: w.store.statsByPolicyVersion() });
+    // 健康判定跟统计一起给：判据只有一处（policy/health.ts），前端不自己算。
+    // 它回答的是「这条策略被验证过没有」—— 与命中率是两个问题，
+    // 而「跑得少」看起来和「跑得好」在数字上一模一样（都是 0 命中）。
+    return json(res, {
+      stats: w.store.statsByPolicyVersion().map((s) => {
+        const p = w.policies.find((x) => x.id === s.policyId);
+        return {
+          ...s,
+          health: judgeHealth({
+            enabled: p?.enabled !== false,
+            total: s.total,
+            hit: s.hit,
+            error: s.error,
+          }),
+        };
+      }),
+    });
   }
 
   if (path === '/api/reaction' && req.method === 'POST') {
