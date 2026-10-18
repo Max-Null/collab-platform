@@ -416,7 +416,17 @@
     style.textContent = [
       '.diagram-container{--archify-nav-reserve:0px !important}',
       // 兜底：万一还有别的链条推这个变量，也不让它把容器撑开
-      '.diagram-container{min-height:0 !important}'
+      '.diagram-container{min-height:0 !important}',
+      // ⚠️ **导航条不许铺满容器的整条边。**
+      //
+      // 它的 CSS 同时写了 `top: 54px` 和 `bottom: 16px`，于是被拉成一条
+      // 408 × 2066 的绝对定位大面板 —— 而里面那 8 个按钮全贴在底部。
+      // 结果：容器右侧 408px 宽、两千多像素高的一大片，是空的半透明白底，
+      // 盖上图的右边缘。点开某个节点（聚焦模式）之后更明显：图被平移到左边，
+      // 右边那片空就成了一张「不知道是什么的白板」。
+      //
+      // 让它只包住按钮（高度 auto、贴底），白板就没有了，按钮还在原处。
+      '.diagram-nav{top:auto !important;bottom:16px !important;height:auto !important}'
     ].join('\n');
     document.head.appendChild(style);
   }
