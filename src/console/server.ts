@@ -4,6 +4,9 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { buildOverview } from './overview.js';
+import { ask } from '../butler/ask.js';
+import { renderFacts } from '../butler/facts.js';
+import { tour } from '../butler/tour.js';
 import { failureRuns } from '../heartbeat.js';
 import { judgeHealth } from '../policy/health.js';
 import { parseUsage } from '../usage.js';
@@ -278,6 +281,101 @@ function handle(req: IncomingMessage, res: ServerResponse, url: URL): void {
     const row = w.store.findById(Number(detail[1]));
     if (!row) return json(res, { error: `没有 id 为 ${detail[1]} 的判断记录` }, 404);
     return json(res, shape(row));
+  }
+
+  /**
+   * 导览 —— 她替人先看一遍，然后给出「先看哪几件、按什么顺序」。
+   *
+   * 与 `/api/ask` 的区别是**谁发起**：问答由人发起，人没问到的部分他不知道；
+   * 导览由她发起，返回的是**结构化的停靠点**（每段挂在一个 eventId 上），
+   * 所以界面能把它摆进对应的那张卡片里 —— 而不是另开一个聊天框。
+   *
+   * 同样会调模型，同样慢。前端应当异步加载，不挡住第一屏。
+   */
+  if (path === '/api/tour' && req.method === 'POST') {
+    void (async () => {
+      try {
+        const body = await readBody(req);
+        const rawHours = Number(body.hours);
+        const hours = Number.isFinite(rawHours) && rawHours > 0 ? rawHours : 24;
+
+        const result = await tour({
+          store: w.store,
+          llm: w.llm,
+          llmConfigured: w.llmConfigured,
+          hours,
+        });
+
+        if (!result.ok) {
+          return json(
+            res,
+            { ok: false, error: result.error },
+            w.llmConfigured ? 502 : 503,
+          );
+        }
+
+        return json(res, {
+          ok: true,
+          tour: result.tour,
+          // 有值就说明模型编了挂不上的展品编号 —— 界面上该说出来，
+          // 否则「它讲了 5 件」和「它讲了 3 件、2 件扔了」长得一样
+          droppedStops: result.droppedStops ?? 0,
+        });
+      } catch (e) {
+        return json(res, { error: e instanceof Error ? e.message : String(e) }, 500);
+      }
+    })();
+    return;
+  }
+
+  /**
+   * 问她一句话。
+   *
+   * ⚠️ 这是控制台上**唯一会调模型**的路由，所以它慢（几秒到几十秒），
+   * 而其余路由都是读库。前端必须显示「在想」，而不是让它悄悄挂着 ——
+   * 一个不响应的按钮与一个坏了的功能，在用户那边长得一模一样。
+   */
+  if (path === '/api/ask' && req.method === 'POST') {
+    void (async () => {
+      try {
+        const body = await readBody(req);
+        const question = typeof body.question === 'string' ? body.question.trim() : '';
+        if (!question) return json(res, { error: '问题不能为空' }, 400);
+
+        const rawHours = Number(body.hours);
+        const hours = Number.isFinite(rawHours) && rawHours > 0 ? rawHours : undefined;
+
+        const result = await ask(question, {
+          store: w.store,
+          llm: w.llm,
+          llmConfigured: w.llmConfigured,
+          hours,
+        });
+
+        if (!result.ok) {
+          return json(
+            res,
+            {
+              ok: false,
+              error: result.error,
+              // 原始材料照给：她说不出话时，人自己读记录也比什么都没有强。
+              // 但**不把它伪装成回答** —— 它是 facts，前面没有一句结论。
+              facts: renderFacts(result.facts),
+            },
+            w.llmConfigured ? 502 : 503,
+          );
+        }
+
+        return json(res, {
+          ok: true,
+          answer: result.answer,
+          facts: renderFacts(result.facts),
+        });
+      } catch (e) {
+        return json(res, { error: e instanceof Error ? e.message : String(e) }, 500);
+      }
+    })();
+    return;
   }
 
   if (path === '/api/stats') {

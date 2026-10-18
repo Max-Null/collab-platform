@@ -45,7 +45,7 @@
   .live.stopped{background:var(--stop-bg);border-color:#f2cfcc;color:#8d1f19}
   .live.stopped i{background:var(--stop)}
 
-  main{max-width:1120px;margin:0 auto;padding:22px 24px 48px}
+  main{max-width:1120px;margin:0 auto;padding:22px 24px 130px}
 
   /* ── 提示 ──────────────────────────────────────────────────
      只留真正会把人带偏的那几处。解释性的长文一律不进页面 ——
@@ -115,9 +115,15 @@
      斜纹读起来正是这个意思，而再给一个颜色只会让它看起来像第三类问题。 */
   .need.broken{border-left-color:var(--err);
     background-image:repeating-linear-gradient(45deg,transparent,transparent 6px,rgba(154,108,0,.05) 6px,rgba(154,108,0,.05) 12px)}
-  .need .nhead{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
-  .need .ntitle{font-weight:620;font-size:13.5px;min-width:0;overflow-wrap:anywhere}
-  .need .ntag{font-size:11.5px;font-weight:600;border-radius:5px;padding:1px 7px;flex:none}
+  /* 一张卡＝一件**发生过的事**，不是一条记录。
+     所以第一行读起来要像一句话：「某位同事 · 36 分钟前 · 「配置管理」 看着可疑」。
+     ⚠️ 标题原本写在最左边、「命中」紧跟其后 —— 那是元数据的排法：
+     人得先认出这是谁、什么时候，才谈得上判它对不对。 */
+  .need .nhead{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+  .need .nwho{font-weight:650;font-size:13.5px;flex:none}
+  .need .nwhen{font-size:12px;color:var(--ink-3);flex:none}
+  .need .ntitle{font-size:13.5px;color:var(--ink-2);min-width:0;overflow-wrap:anywhere}
+  .need .ntag{font-size:11.5px;font-weight:600;border-radius:5px;padding:1px 8px;flex:none;white-space:nowrap}
   .need .ntag.h{background:var(--hit-bg);color:var(--hit)}
   .need .ntag.e{background:var(--err-bg);color:var(--err)}
   .need .nmeta{font-size:11.5px;color:var(--ink-3);margin-left:auto;white-space:nowrap}
@@ -186,6 +192,61 @@
   .banner.quiet{background:var(--panel);color:var(--ink-2)}
   .banner code{background:rgba(0,0,0,.06)}
 
+  /* ── 问她（固定在底部）────────────────────────────────────────
+     ⚠️ **它不在第一屏最上面，这是刻意的。**
+     问题是从「看见」里长出来的，不是从「会问」里长出来的：人先看到
+     「这条审核没通过」「这次没看成」，才知道要问什么。把输入框摆在顶上，
+     等于要求他先想好一个正确的问题 —— 而这恰恰是他做不到的事。
+     所以它固定在底部：看完了，手边就有地方追问。 */
+  #butler{position:fixed;left:0;right:0;bottom:0;z-index:40;
+    padding:26px 24px 12px;pointer-events:none;
+    background:linear-gradient(to bottom,rgba(246,247,249,0),var(--bg) 26%)}
+  #butler .askwrap{max-width:1120px;margin:0 auto;pointer-events:auto}
+  #askOut{margin-bottom:8px;max-height:50vh;overflow:auto;background:var(--panel);
+    border:1px solid var(--line);border-radius:11px;padding:14px 16px;box-shadow:var(--shadow)}
+  #askOut.bad{border-left:3px solid var(--err)}
+  #askOut .ans{white-space:pre-wrap;font-size:13.5px;line-height:1.78;color:var(--ink)}
+  #askOut .err{font-size:13px;line-height:1.7;color:#8d1f19}
+  #askOut details{margin-top:11px;font-size:11.5px;color:var(--ink-3)}
+  #askOut summary{cursor:pointer;outline:none}
+  #askOut pre{white-space:pre-wrap;word-break:break-word;font-family:var(--mono);
+    font-size:11px;line-height:1.6;max-height:300px;overflow:auto;
+    background:#f7f8fb;border-radius:8px;padding:10px;margin:8px 0 0}
+  .askbar{display:flex;gap:8px;align-items:center;background:var(--panel);
+    border:1px solid var(--line);border-radius:11px;padding:7px 9px;box-shadow:var(--shadow)}
+  .askbar input{flex:1;min-width:0;border:none;outline:none;font:inherit;
+    background:none;color:var(--ink);padding:5px 6px}
+  .askbar input::placeholder{color:var(--ink-3)}
+  .askbar button{flex:none}
+
+  /* ── 导览 ────────────────────────────────────────────────────
+     她替人先看一遍：今天整体怎么样、先看哪几件。
+     ⚠️ 那几件**可点**，点了会滚到对应卡片并闪一下 —— 「带路」这件事，
+     如果只是列个清单不把人送过去，读者仍要自己找。 */
+  .tourbar{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--brand);
+    border-radius:12px;padding:14px 16px;box-shadow:var(--shadow)}
+  .tourbar .tintro{font-size:13.5px;line-height:1.78;color:var(--ink);white-space:pre-wrap}
+  .tourbar .tstops{list-style:none;margin:11px 0 0;padding:0;display:flex;flex-direction:column;gap:5px}
+  .tourbar .tstops li{display:flex;gap:9px;align-items:baseline;font-size:13px;
+    padding:6px 10px;border-radius:8px;cursor:pointer;background:#fafbfd;
+    border:1px solid transparent;transition:background .12s}
+  .tourbar .tstops li:hover{background:var(--brand-soft);border-color:#dbe3ff}
+  .tourbar .tstops .no{font-family:var(--mono);font-size:11.5px;color:var(--brand);
+    font-weight:700;flex:none;min-width:12px}
+  .tourbar .tstops .tt{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;font-weight:600}
+  .tourbar .tstops .tw{color:var(--ink-3);font-size:12px;flex:1 1 auto;min-width:0;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tourbar .tclosing{margin-top:10px;font-size:12.5px;color:var(--ink-2);white-space:pre-wrap}
+
+  /* 她讲这一件的话 —— 长在卡片里，不是聊天记录 */
+  .her{margin-top:10px;padding:11px 13px;background:#f8f9fc;border-radius:9px;
+    border-left:3px solid var(--brand);font-size:13px;line-height:1.75}
+  .her .why{color:var(--ink-3);font-size:12px;margin-bottom:6px}
+  .her .why b{color:var(--brand);font-weight:650;margin-right:6px}
+  .her .say{color:var(--ink);white-space:pre-wrap}
+  .need.flash,.row.flash{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-soft),var(--shadow)}
+
   /* ── 观察 / 记录 ─────────────────────────────────────────── */
   .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:14px}
   .tabs button{border:none;background:none;border-radius:0;border-bottom:2px solid transparent;
@@ -221,6 +282,11 @@
 
 <main>
   <div id="banner"></div>
+
+  <!-- ═══════════ 导览：她替你先看一遍 ═══════════ -->
+  <section id="tourSec" hidden>
+    <div class="tourbar" id="tourBar"></div>
+  </section>
 
   <!-- ═══════════ 第一屏：项目 ═══════════ -->
   <div class="projects" id="projects"></div>
@@ -259,6 +325,18 @@
     <div>页面上的每个数字，要么来自判断记录、要么来自代码托管平台的客观事实，没有第三个来源</div>
   </div>
 </main>
+
+<!-- ═══════════ 问她：固定在底部，看完再说 ═══════════ -->
+<div id="butler">
+  <div class="askwrap">
+    <div id="askOut" hidden></div>
+    <div class="askbar">
+      <input id="askInput" type="text" autocomplete="off"
+             placeholder="看完想问点什么 —— 比如「#2 是怎么回事」「上周谁改得最多」">
+      <button id="askBtn" class="yes">问</button>
+    </div>
+  </div>
+</div>
 
 <script>
 /* ══════════════════════════════════════════════════════════════
@@ -346,6 +424,173 @@ function whyText(j) {
   return '<span style="color:var(--ink-3)">（这条记录没写结论说明）</span>';
 }
 
+/* ── 问她 ────────────────────────────────────────────────────
+   这个请求会真的调模型，几秒到几十秒。所以三件事必须做：
+   ① 按钮当场换成「在想…」并禁用 —— 一个没反应的按钮，与一个坏了的功能
+      在用户那边长得一模一样；
+   ② 已有的回答**不清空**，只在上方显示「在想…」，否则每次提问都像把上一条弄丢了；
+   ③ 失败时把错误显示出来，并且**不把原始材料伪装成回答** —— 它是材料，不是结论。
+*/
+const askInput = document.getElementById('askInput');
+const askBtn = document.getElementById('askBtn');
+const askOut = document.getElementById('askOut');
+
+async function doAsk() {
+  const question = askInput.value.trim();
+  if (!question) return;
+
+  askBtn.disabled = true;
+  askBtn.textContent = '在想…';
+
+  const pending = document.createElement('div');
+  pending.className = 'ans';
+  pending.style.color = 'var(--ink-3)';
+  pending.textContent = '在想…（这一步会真的问模型，可能要十几秒）';
+  askOut.hidden = false;
+  askOut.classList.remove('bad');
+  askOut.prepend(pending);
+
+  try {
+    const res = await fetch('/api/ask', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ question })
+    });
+    const d = await res.json();
+
+    pending.remove();
+
+    if (!res.ok || !d.ok) {
+      askOut.classList.add('bad');
+      askOut.insertAdjacentHTML('afterbegin', `
+        <div class="err">${esc(d.error || '这次没有回答')}</div>
+        ${d.facts ? `<details><summary>我手里的原始材料（它不是回答）</summary><pre>${esc(d.facts)}</pre></details>` : ''}
+      `);
+    } else {
+      askOut.insertAdjacentHTML('afterbegin', `
+        <div class="ans">${esc(d.answer)}</div>
+        ${d.facts ? `<details><summary>她读的材料</summary><pre>${esc(d.facts)}</pre></details>` : ''}
+      `);
+    }
+  } catch (e) {
+    pending.remove();
+    askOut.classList.add('bad');
+    askOut.insertAdjacentHTML('afterbegin', `<div class="err">没连上：${esc(e.message)}</div>`);
+  } finally {
+    askBtn.disabled = false;
+    askBtn.textContent = '问';
+  }
+}
+
+askBtn.onclick = doAsk;
+askInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.isComposing) doAsk();
+});
+
+/* ── 导览与她的解说 ──────────────────────────────────────────
+   ⚠️ 她的话**挂在卡片里**，不是另开一个聊天区。这是「导游」与「历史老师」
+   的分界：一段话如果只在聊天框里，读者得自己把它和左边那件东西对上；
+   挂在卡片里，它就在讲这一件。
+
+   ⚠️ 解说挂不上就不显示 —— 不显示比显示一段张冠李戴的话好得多。 */
+let CURRENT_VIEW = null;
+let CURRENT_TOUR = null;
+
+function stopFor(eventId) {
+  return (CURRENT_TOUR && CURRENT_TOUR.stops ? CURRENT_TOUR.stops : []).find(
+    (s) => s.eventId === eventId,
+  );
+}
+
+function herBox(eventId) {
+  const s = stopFor(eventId);
+  if (!s) return '';
+  return `<div class="her">
+    <div class="why"><b>${s.order}.</b>${esc(s.why)}</div>
+    <div class="say">${esc(s.say)}</div>
+  </div>`;
+}
+
+/** 把人送到那件展品面前：滚动 + 闪一下。如果要找的在折叠区里，先把它展开。 */
+function jumpTo(eventId) {
+  const sel = `[data-ev="${CSS.escape(eventId)}"]`;
+  let target = document.querySelector(sel);
+
+  if (!target) {
+    const list = document.getElementById('restList');
+    if (list && list.hidden) {
+      document.getElementById('restToggle').click();
+      target = document.querySelector(sel);
+    }
+  }
+  if (!target) return;
+
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  target.classList.add('flash');
+  setTimeout(() => target.classList.remove('flash'), 1400);
+}
+
+function renderTour(d) {
+  const bar = document.getElementById('tourBar');
+  const t = d.tour || {};
+
+  const stops = (t.stops || [])
+    .map((s) => {
+      const c = (CURRENT_VIEW && CURRENT_VIEW.changes ? CURRENT_VIEW.changes : []).find(
+        (x) => x.eventId === s.eventId,
+      );
+      return `<li data-jump="${esc(s.eventId)}">
+        <span class="no">${s.order}</span>
+        <span class="tt">${esc(c ? c.title || c.eventId : s.eventId)}</span>
+        <span class="tw">${esc(s.why)}</span>
+      </li>`;
+    })
+    .join('');
+
+  bar.innerHTML = `
+    <div class="tintro">${esc(t.intro || '')}</div>
+    ${stops ? `<ul class="tstops">${stops}</ul>` : ''}
+    ${t.closing ? `<div class="tclosing">${esc(t.closing)}</div>` : ''}
+    ${
+      d.droppedStops
+        ? `<div class="tclosing" style="color:var(--ink-3)">（另有 ${d.droppedStops} 段解说挂不到任何一条变更上，已经丢弃）</div>`
+        : ''
+    }`;
+
+  bar.querySelectorAll('[data-jump]').forEach((li) => {
+    li.onclick = () => jumpTo(li.dataset.jump);
+  });
+}
+
+async function loadTour() {
+  const sec = document.getElementById('tourSec');
+  sec.hidden = false;
+  document.getElementById('tourBar').innerHTML =
+    '<div class="tintro" style="color:var(--ink-3)">她在先看一遍…（这一步会真的问模型）</div>';
+
+  try {
+    const res = await fetch('/api/tour', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const d = await res.json();
+
+    if (!res.ok || !d.ok) {
+      // 没有导览就不显示这块。**不留一句「她没来得及看」**：
+      // 那会让人以为她看过了但没话说 —— 与「根本没看」是两件事。
+      sec.hidden = true;
+      return;
+    }
+
+    CURRENT_TOUR = d.tour;
+    renderTour(d);
+    if (CURRENT_VIEW) renderAttention(CURRENT_VIEW);
+  } catch {
+    sec.hidden = true;
+  }
+}
+
 /* ── 渲染：项目 ───────────────────────────────────────────────
    一块一个项目。三样东西按重要性排：名字、要你管几件、变更条。
    其余（命中/没做成/未命中的明细）缩到脚注 —— 需要时才看。 */
@@ -430,9 +675,12 @@ function renderAttention(view) {
 
   const card = (c) => {
     const isBroken = c.verdict === 'error';
+    // ⚠️ 标签说的是**人的话**，不是判定的结局名：
+    // 「命中」要读成「看着可疑」，「判断没做成」要读成「这次没看成」。
+    // 结局三态是给观察期统计用的，不是给读这一屏的人用的。
     const tag = isBroken
-      ? `<span class="ntag e">判断没做成 <i class="help-tip" data-tip="broken" tabindex="0">?</i></span>`
-      : `<span class="ntag h">命中</span>`;
+      ? `<span class="ntag e">这次没看成 <i class="help-tip" data-tip="broken" tabindex="0">?</i></span>`
+      : `<span class="ntag h">看着可疑</span>`;
 
     // ⚠️ 不在这里再写一遍「它说了什么」—— 下面每条判定已经把话说全了。
     // 汇总行 + 逐条行重复同一句话，卡的密度翻倍而信息量为零，
@@ -456,14 +704,15 @@ function renderAttention(view) {
       ? `回写会同时记到 ${ids.length} 条判定上（这次变更上每条未表态的策略各一条）`
       : `回写会记进这条策略的观察期 —— 「判错了」是升级唯一的触发条件`;
 
-    return `<div class="need ${isBroken ? 'broken' : ''}">
+    return `<div class="need ${isBroken ? 'broken' : ''}" data-ev="${esc(c.eventId)}">
       <div class="nhead">
-        <span class="ntitle">${esc(c.title || c.eventId)}</span>
+        <span class="nwho">${esc(c.author || '未知作者')}</span>
+        <span class="nwhen">${ago(c.lastSeenAt)}</span>
+        <span class="ntitle">「${esc(c.title || c.eventId)}」</span>
         ${tag}
-        <span class="nmeta">
-          ${c.project ? esc(c.project) + ' · ' : ''}${esc(c.author || '未知作者')} · ${ago(c.lastSeenAt)}
-        </span>
+        <span class="nmeta">${c.project ? esc(c.project) : '项目未记录'}</span>
       </div>
+      ${herBox(c.eventId)}
       ${rows}
       <div class="acts" data-ids="${actIds}">
         <button class="yes" data-r="adopted">判对了</button>
@@ -515,7 +764,7 @@ function renderRest(view) {
         <span class="why">${j.reason ? esc(j.reason) : '<span style="color:var(--ink-3)">（未命中：看过，没发现问题）</span>'}</span>
         ${j.reaction ? `<span class="rtime">已表态：${esc(j.reaction)}</span>` : ''}
       </div>`).join('');
-    return `<div class="row" onclick="this.querySelector('.det').hidden=!this.querySelector('.det').hidden">
+    return `<div class="row" data-ev="${esc(c.eventId)}" onclick="this.querySelector('.det').hidden=!this.querySelector('.det').hidden">
       <span class="dot ${OUTCOME_CLASS[c.verdict]}${c.verdict === 'miss' ? '' : ' r'}" style="flex:none"></span>
       <span class="rname">${esc(c.title || c.eventId)}</span>
       <span class="rproj">${esc(c.project || '未记录')}</span>
@@ -688,12 +937,16 @@ document.querySelectorAll('.tabs button').forEach((b) => {
 });
 
 /* ── 装配 ─────────────────────────────────────────────────── */
+let TOUR_STARTED = false;
+
 async function load() {
   const [pv, st, lg] = await Promise.all([
     fetch('/api/project-view').then((r) => r.json()),
     fetch('/api/stats').then((r) => r.json()),
     fetch('/api/judgments?limit=100').then((r) => r.json())
   ]);
+
+  CURRENT_VIEW = pv;
 
   renderLive(pv);
   renderBanner(pv);
@@ -702,6 +955,13 @@ async function load() {
   renderRest(pv);
   renderStats(st.stats || []);
   renderLog(lg.rows || []);
+
+  // 导览**只在她第一次打开时生成一次**：表态之后 load() 会重跑，
+  // 每次重跑都问一遍模型，等于为同一个问题反复付钱，而且答案还会飘。
+  if (!TOUR_STARTED) {
+    TOUR_STARTED = true;
+    loadTour();
+  }
 }
 
 load().catch((e) => {
