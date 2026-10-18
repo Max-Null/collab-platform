@@ -1,9 +1,12 @@
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { GitHubPullSource } from './event/github.js';
+import { GitHubPushSource } from './event/github-push.js';
 import { GitLabPollSource } from './event/gitlab.js';
 import { GitLabPushSource } from './event/gitlab-push.js';
 import { MockEventSource } from './event/mock.js';
 import type { EventSource } from './event/source.js';
+import { GitHubApi } from './github/api.js';
 import { GitLabApi, fetchOAuthToken } from './gitlab/api.js';
 import { runPipeline } from './pipeline.js';
 import { judgeHealth } from './policy/health.js';
@@ -35,7 +38,7 @@ const outDir = resolve(root, values.out);
 
 function need(name: string): string {
   const value = process.env[name];
-  if (!value) throw new Error(`事件源选 gitlab 时必须配环境变量 ${name}`);
+  if (!value) throw new Error(`事件源选 ${values.source} 时必须配环境变量 ${name}`);
   return value;
 }
 
@@ -43,7 +46,29 @@ let source: EventSource;
 let gitlab: GitLabWiring | undefined;
 let sourceNote: string;
 
-if (values.source === 'gitlab' || values.source === 'gitlab-push') {
+if (values.source === 'github' || values.source === 'github-push') {
+  // GitHub 只有一种凭据形态：Personal Access Token 走 `Authorization: Bearer`。
+  // 没有「用户名密码换令牌」那条路（那是 GitLab 的 OAuth 机制），
+  // 所以这里也不需要 refresh —— PAT 不过期，被撤销了就该如实报错。
+  const api = new GitHubApi({ token: need('GITHUB_TOKEN') });
+  const project = need('GITHUB_PROJECT');
+
+  if (values.source === 'github-push') {
+    const branch = process.env.GITHUB_BRANCH;
+    source = new GitHubPushSource(api, project, {
+      branch,
+      limit: Number(process.env.GITHUB_COMMIT_LIMIT ?? 20),
+    });
+    sourceNote = `github-push · ${project} · 分支 ${branch ?? '（默认分支）'} · 只读`;
+  } else {
+    const state = process.env.GITHUB_PR_STATE ?? 'open';
+    source = new GitHubPullSource(api, project, {
+      limit: Number(process.env.GITHUB_PR_LIMIT ?? 20),
+      state,
+    });
+    sourceNote = `github · ${project} · state=${state} · 只读`;
+  }
+} else if (values.source === 'gitlab' || values.source === 'gitlab-push') {
   const baseUrl = need('GITLAB_BASE_URL');
   const project = need('GITLAB_PROJECT');
   const write = process.env.GITLAB_WRITE === 'true';

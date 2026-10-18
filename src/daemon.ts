@@ -1,12 +1,16 @@
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { GitHubPullSource } from './event/github.js';
+import { GitHubPushSource } from './event/github-push.js';
 import { GitLabPollSource } from './event/gitlab.js';
 import { GitLabPushSource } from './event/gitlab-push.js';
 import type { EventSource } from './event/source.js';
+import { GitHubApi } from './github/api.js';
 import { GitLabApi, fetchOAuthToken } from './gitlab/api.js';
 import { runPipeline } from './pipeline.js';
 import type { Heartbeat, ProbeResult } from './types.js';
 import { wire } from './wiring.js';
+import type { GitLabWiring } from './wiring.js';
 
 /**
  * 常驻轮询：让平台在没人敲命令的时候也在跑。
@@ -61,6 +65,15 @@ const { values } = parseArgs({
      * 再由别的出口（简报、MCP）说出去。见 types.ts 的 Heartbeat.probe。
      */
     probe: { type: 'string' },
+    /**
+     * 盯哪个代码托管平台：`github` / `gitlab`。
+     *
+     * ⚠️ **必须显式给，不按环境变量猜。** 「哪个变量配了就猜哪个」在这里特别坏：
+     * 两个平台的环境变量同时存在时（本地有 GitHub、公司有 GitLab），猜错的后果是
+     * 常驻安安静静地盯着一个你以为它没在看的仓库 —— 而它每轮都成功、每轮 0 事件。
+     * 这与「真的没有变更」长得一模一样，正是这个平台全篇在防的那类失效。
+     */
+    host: { type: 'string', default: 'gitlab' },
     once: { type: 'boolean', default: false },
   },
   allowPositionals: false,
@@ -101,44 +114,69 @@ function log(msg: string): void {
 }
 
 async function main(): Promise<void> {
-  const baseUrl = need('GITLAB_BASE_URL');
-  const project = need('GITLAB_PROJECT');
-  const write = process.env.GITLAB_WRITE === 'true';
-
-  // 两种凭据形态，与 CLI 一致（PAT 优先，否则用户名密码换 OAuth 令牌）
-  let api: GitLabApi;
-  const pat = process.env.GITLAB_TOKEN;
-  if (pat) {
-    api = new GitLabApi({ baseUrl, token: pat });
-  } else {
-    const username = need('GITLAB_USER');
-    const password = need('GITLAB_PASSWORD');
-    const token = await fetchOAuthToken({ baseUrl, username, password });
-    api = new GitLabApi({
-      baseUrl,
-      token,
-      tokenKind: 'bearer',
-      // 常驻要跑几天，而这条令牌两小时就过期 —— 让它自己在 401 时换一个（见 api.ts 的 req）
-      refresh: () => fetchOAuthToken({ baseUrl, username, password }),
-    });
-  }
-
   const wanted = (values.source ?? 'push')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
 
   const sources: EventSource[] = [];
-  if (wanted.includes('mr')) {
-    sources.push(
-      new GitLabPollSource(api, project, { limit: Number(values.limit), state: values.state }),
-    );
+  let gitlabWiring: GitLabWiring | undefined;
+  let hostNote: string;
+
+  if (values.host === 'github') {
+    const api = new GitHubApi({ token: need('GITHUB_TOKEN') });
+    const project = need('GITHUB_PROJECT');
+
+    if (wanted.includes('mr')) {
+      sources.push(
+        new GitHubPullSource(api, project, { limit: Number(values.limit), state: values.state }),
+      );
+    }
+    if (wanted.includes('push')) {
+      sources.push(
+        new GitHubPushSource(api, project, { branch: values.branch, limit: Number(values.limit) }),
+      );
+    }
+    hostNote = `github · ${project} · 只读（写开关还没接到 GitHub 上）`;
+  } else if (values.host === 'gitlab') {
+    const baseUrl = need('GITLAB_BASE_URL');
+    const project = need('GITLAB_PROJECT');
+    const write = process.env.GITLAB_WRITE === 'true';
+
+    // 两种凭据形态，与 CLI 一致（PAT 优先，否则用户名密码换 OAuth 令牌）
+    let api: GitLabApi;
+    const pat = process.env.GITLAB_TOKEN;
+    if (pat) {
+      api = new GitLabApi({ baseUrl, token: pat });
+    } else {
+      const username = need('GITLAB_USER');
+      const password = need('GITLAB_PASSWORD');
+      const token = await fetchOAuthToken({ baseUrl, username, password });
+      api = new GitLabApi({
+        baseUrl,
+        token,
+        tokenKind: 'bearer',
+        // 常驻要跑几天，而这条令牌两小时就过期 —— 让它自己在 401 时换一个（见 api.ts 的 req）
+        refresh: () => fetchOAuthToken({ baseUrl, username, password }),
+      });
+    }
+
+    if (wanted.includes('mr')) {
+      sources.push(
+        new GitLabPollSource(api, project, { limit: Number(values.limit), state: values.state }),
+      );
+    }
+    if (wanted.includes('push')) {
+      sources.push(
+        new GitLabPushSource(api, project, { branch: values.branch, limit: Number(values.limit) }),
+      );
+    }
+    gitlabWiring = { api, project, write };
+    hostNote = `gitlab · ${project} · ${write ? '写开关【开】' : '写开关【关】（干燥跑，不发任何东西到 GitLab）'}`;
+  } else {
+    throw new Error(`--host 只能是 github 或 gitlab：${values.host}`);
   }
-  if (wanted.includes('push')) {
-    sources.push(
-      new GitLabPushSource(api, project, { branch: values.branch, limit: Number(values.limit) }),
-    );
-  }
+
   if (sources.length === 0) {
     // 装配期就报错，不留到运行时空转 —— 一个「什么都没订阅」的常驻进程会
     // 每轮成功、每轮 0 事件，与「真的没有变更」长得一模一样。
@@ -146,16 +184,15 @@ async function main(): Promise<void> {
   }
 
   // 装配与 CLI、MCP 出口共用一条路径 —— 三个入口给出不同结论才是真问题
-  const w = wire({ root, dbPath, outDir, gitlab: { api, project, write } });
+  const w = wire({ root, dbPath, outDir, gitlab: gitlabWiring });
 
   const intervalMs = Math.max(30, Number(values.interval)) * 1000;
   let rounds = 0;
   let stopped = false;
 
   log(
-    `[协作平台 · 常驻] ${project} · 订阅 ${sources.map((s) => s.name).join(' + ')}` +
-      `${values.branch ? ` @ ${values.branch}` : ''} · 每 ${intervalMs / 1000}s 一轮 · ` +
-      `${write ? '写开关【开】' : '写开关【关】（干燥跑，不发任何东西到 GitLab）'}`,
+    `[协作平台 · 常驻] ${hostNote} · 订阅 ${sources.map((s) => s.name).join(' + ')}` +
+      `${values.branch ? ` @ ${values.branch}` : ''} · 每 ${intervalMs / 1000}s 一轮`,
   );
   log(
     `  策略 ${w.policies.length} 条 · 模型 ${

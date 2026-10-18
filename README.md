@@ -68,6 +68,48 @@ node --experimental-sqlite dist/src/index.js --source=gitlab --stats
 
 `GITLAB_MR_STATE` 默认 `opened`；设成 `all` 可以拿**历史 MR** 做演练 —— 只读、现成、早就没人会因为它多出一条评论而受影响。`GITLAB_MR_LIMIT` 默认 20。
 
+### 接 GitHub
+
+这台机器上没有 GitLab 时它也能用 —— 换的是事件源，判据、留痕、观察期一个字都不改。
+
+```powershell
+$env:GITHUB_TOKEN   = gh auth token          # 本机 gh 已登录时直接取，不用把令牌贴出来
+$env:GITHUB_PROJECT = "owner/repo"
+
+node --experimental-sqlite dist/src/index.js --source=github-push        # 只看推送
+node --experimental-sqlite dist/src/index.js --source=github             # 只看 PR
+node --experimental-sqlite dist/src/index.js --source=github,github-push # 两个都看
+```
+
+常驻同理，多一个 `--host`：
+
+```powershell
+node dist/src/daemon.js --host=github --source=push --branch=main
+```
+
+⚠️ **`--host` 必须显式给，不按环境变量猜。** 本地有 GitHub、公司有 GitLab，两套变量
+同时存在时，「哪个配了就猜哪个」猜错的后果很具体：常驻安安静静地盯着一个你以为它
+没在看的仓库，**每轮都成功、每轮 0 个事件** —— 而那与「真的没有变更」长得一模一样，
+正是这个平台全篇在防的那类失效。
+
+GitHub 与 GitLab 在这层是一一对应的，差异只停在协议上：
+
+| 平台要的东西 | GitLab | GitHub |
+|---|---|---|
+| 变更列表 | `merge_requests` | `pulls` |
+| 变更的「声称」 | MR title + description | PR title + body |
+| 改了什么 | `.../changes` | `pulls/{n}/files` |
+| 推送事件 | `repository/commits` | `commits` |
+| 发评论 | `.../notes` | `issues/{n}/comments`（PR 在 GitHub 里就是 issue） |
+
+**目前 GitHub 侧是只读的**：评论与 review 的接口已经写好在 `src/github/api.ts`，
+但还没有接进行为层 —— 与 GitLab 那边一开始只跑 dry-run 是同一个节奏。
+
+三个 GitHub 特有的坑，都写进了注释和测试：`User-Agent` 缺了回 403（而 403 读起来像
+「没权限」）；大文件/二进制时 `patch` 字段可能不出现（**这时要明说「GitHub 没给 patch」，
+不能留白** —— 留白看起来就是「这个文件一行没改」）；推送事件 id 用**完整 sha**
+（短 sha 撞上，这次的判定会被当成上次的悄悄跳过）。
+
 ### 不让它悄悄死掉：看门狗
 
 常驻会**静默死掉** —— 2026-10-16 实测过一次：没有报错、没有遗言，`err.log` 是空的、
