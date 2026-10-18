@@ -55,7 +55,7 @@ test('命中：改动触及敏感路径时，产生动作且依据里带具体�
   const target = events.find((e) => e.id === 'mock-mr-001');
   assert.ok(target, '样例事件 mock-mr-001 应当存在');
 
-  const d = deps(resolve(root, 'var/test-comments'));
+  const d = deps(resolve(root, 'var/test-comments/pipeline'));
   const result = await runPipeline(target, d);
 
   const verdict = result.verdicts[0]!;
@@ -80,7 +80,7 @@ test('未命中：干净的改动不报问题，但同样落记录、同样表�
   const target = events.find((e) => e.id === 'mock-mr-002');
   assert.ok(target, '样例事件 mock-mr-002 应当存在');
 
-  const d = deps(resolve(root, 'var/test-comments'));
+  const d = deps(resolve(root, 'var/test-comments/pipeline'));
   const result = await runPipeline(target, d);
 
   assert.equal(result.verdicts[0]!.outcome, 'miss');
@@ -97,7 +97,7 @@ test('留痕：判断记录能从库里读回来，且依据完整', async () =>
   const events = await source.fetch();
   const target = events.find((e) => e.id === 'mock-mr-001')!;
 
-  const d = deps(resolve(root, 'var/test-comments'));
+  const d = deps(resolve(root, 'var/test-comments/pipeline'));
   await runPipeline(target, d);
 
   const rows = d.store.listRecent(10);
@@ -120,7 +120,7 @@ test('留痕：判断记录能从库里读回来，且依据完整', async () =>
 
 test('观察期：反应可事后补填，统计只把「明确否定」单列', async () => {
   const events = await source.fetch();
-  const d = deps(resolve(root, 'var/test-comments'));
+  const d = deps(resolve(root, 'var/test-comments/pipeline'));
 
   for (const ev of events) {
     await runPipeline(ev, d);
@@ -161,7 +161,7 @@ test('一次事件只动一次手：两条策略都命中时，评论仍然只�
     }),
   );
 
-  const outDir = resolve(root, 'var/test-comments');
+  const outDir = resolve(root, 'var/test-comments/pipeline');
   const store = new RecordStore(':memory:');
 
   const result = await runPipeline(event, {
@@ -457,7 +457,7 @@ test('动作：评论正文把结论与依据分开呈现，并注明是哪条�
   const events = await source.fetch();
   const target = events.find((e) => e.id === 'mock-mr-001')!;
 
-  const outDir = resolve(root, 'var/test-comments');
+  const outDir = resolve(root, 'var/test-comments/pipeline');
   const d = deps(outDir);
   await runPipeline(target, d);
 

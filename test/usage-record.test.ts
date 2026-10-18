@@ -34,7 +34,7 @@ async function mr003() {
 function deps(llm: StubLlmClient) {
   return {
     policies: [createClaimMismatchPolicy(config, llm)],
-    actions: new Map([['comment', new CommentAction(resolve(root, 'var/test-comments'))]]),
+    actions: new Map([['comment', new CommentAction(resolve(root, 'var/test-comments/usage-record'))]]),
     store: new RecordStore(':memory:'),
     now: () => new Date('2026-10-13T12:00:00.000Z'),
   };

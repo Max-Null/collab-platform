@@ -25,7 +25,11 @@ async function mr003() {
 function deps(llm: StubLlmClient) {
   return {
     policies: [createClaimMismatchPolicy(config, llm)],
-    actions: new Map([['comment', new CommentAction(resolve(root, 'var/test-comments'))]]),
+    // ⚠️ 每个测试文件用自己的输出目录。`node --test` **并发跑测试文件**，
+    // 三个文件共用一个 `var/test-comments/` 又不带文件名前缀的话，
+    // 它们会互相覆盖对方的 `mock-mr-003.md` —— 表现是断言偶尔读到别人的内容，
+    // 时红时绿，重跑一次就好了。那不是抖动，是它们本来就写在同一张纸上。
+    actions: new Map([['comment', new CommentAction(resolve(root, 'var/test-comments/claim-mismatch'))]]),
     store: new RecordStore(':memory:'),
     now: () => new Date('2026-10-13T12:00:00.000Z'),
   };
